@@ -1,0 +1,501 @@
+const TEAMS = [
+  ['bra','巴西','#18A64A','#FFD43B'], ['arg','阿根廷','#6EC6FF','#FFFFFF'],
+  ['fra','法国','#2446A6','#F23B3B'], ['eng','英格兰','#FFFFFF','#D92828'],
+  ['ger','德国','#1E1E1E','#F2C94C'], ['esp','西班牙','#D7262E','#FFC400'],
+  ['por','葡萄牙','#C8192E','#0C8A4B'], ['ned','荷兰','#F47B20','#1F4E9D']
+];
+const params = new URLSearchParams(location.search);
+const els = Object.fromEntries([...document.querySelectorAll('[id]')].map(el => [el.id, el]));
+const state = {
+  socket: null,
+  roomId: '',
+  playerId: '',
+  playerToken: '',
+  snapshot: null,
+  lastSeq: -1,
+  connected: false,
+  ready: false,
+  inputSeq: 0,
+  mock: params.get('mock') === '1',
+  debug: params.get('debug') === '1',
+  eventsSeen: new Set(),
+  lastInputAt: 0,
+  lastRoom: null,
+  lastResults: [],
+};
+Object.assign(state, JSON.parse(localStorage.getItem('snake_wc_identity') || '{}'));
+
+TEAMS.forEach(([id, name]) => els.country.add(new Option(name, id)));
+els.nickname.value = localStorage.getItem('snake_wc_nickname') || `球员${Math.floor(Math.random() * 900 + 100)}`;
+els.modeBadge.textContent = state.mock ? 'Mock 预览' : '真实联机';
+if (state.debug) els.debugPanel.style.display = 'block';
+
+function show(panel) {
+  ['entryPanel', 'lobbyPanel', 'gamePanel', 'resultPanel'].forEach(id => { els[id].hidden = id !== panel; });
+}
+function status(el, msg) { if (el) el.textContent = msg || ''; }
+function setBusy(button, busy) {
+  if (!button) return;
+  button.disabled = busy;
+  button.dataset.text ||= button.textContent;
+  button.textContent = busy ? '处理中...' : button.dataset.text;
+}
+function isErrorPayload(ack) {
+  return Boolean(ack && (ack.ok === false || ack.success === false || (ack.code && ack.message && !ack.room && !ack.players && !ack.phase)));
+}
+function normalizeAck(ack) {
+  if (!ack) return {};
+  if (isErrorPayload(ack)) return { error: ack.error || ack.message || '操作失败' };
+  return ack.data || ack;
+}
+function authPayload(extra = {}) {
+  return { roomId: state.roomId, playerId: state.playerId, playerToken: state.playerToken, ...extra };
+}
+function emit(name, payload = {}, button) {
+  if (!state.mock && !state.socket?.connected) {
+    showError('未连接服务器，请刷新后重试');
+    return;
+  }
+  setBusy(button, true);
+  state.socket.emit(name, payload, ack => {
+    setBusy(button, false);
+    handleAck(name, ack);
+  });
+}
+function identityPayload() {
+  return { nickname: els.nickname.value.trim() || '球员', country: els.country.value };
+}
+function showError(msg) {
+  const text = typeof msg === 'string' ? msg : (msg?.message || '操作失败');
+  status(els.entryStatus, text);
+  status(els.lobbyStatus, text);
+  if (!els.gamePanel.hidden) banner(text, 'error', 1800);
+}
+function saveIdentity(extra = {}) {
+  Object.assign(state, extra);
+  localStorage.setItem('snake_wc_identity', JSON.stringify({ roomId: state.roomId, playerId: state.playerId, playerToken: state.playerToken }));
+  localStorage.setItem('snake_wc_nickname', els.nickname.value);
+}
+
+function connect() {
+  if (state.mock) {
+    status(els.entryStatus, 'Mock 模式：仅用于视觉预览，不参与联网验收');
+    return startMock();
+  }
+  state.socket = io({ path: '/socket.io/', transports: ['polling'] });
+  state.socket.on('connect', () => {
+    state.connected = true;
+    status(els.entryStatus, '已连接服务器');
+    status(els.lobbyStatus, state.roomId ? '已重新连接服务器' : '');
+    els.netText.textContent = '流畅';
+    if (state.roomId && state.playerId && state.playerToken) reconnect();
+  });
+  state.socket.on('connect_error', err => {
+    state.connected = false;
+    els.netText.textContent = '连接失败';
+    showError(`连接失败：${err?.message || '请检查服务'}`);
+  });
+  state.socket.on('disconnect', () => {
+    state.connected = false;
+    els.netText.textContent = '重连中';
+    status(els.entryStatus, '连接已断开，正在重连');
+    status(els.lobbyStatus, '连接已断开，正在重连');
+    banner('连接波动，正在重连');
+  });
+  state.socket.on('roomState', renderRoom);
+  state.socket.on('countdown', data => {
+    show('gamePanel');
+    const remaining = Math.ceil((data?.remainingMs ?? 0) / 1000);
+    const text = remaining > 0 ? remaining : '开球！';
+    banner(`${text}\n准备抢球`, 'countdown', 900);
+  });
+  state.socket.on('gameSnapshot', renderSnapshot);
+  state.socket.on('playerStatus', data => {
+    if (data?.playerId === state.playerId && isEliminated(data)) {
+      eliminateFeedback(data.deathReason);
+      logEvent(`你已淘汰：${reasonText(data.deathReason)}`);
+    }
+  });
+  state.socket.on('playerEliminated', data => renderEvent({ type: 'playerEliminated', ...data }));
+  state.socket.on('eat', data => renderEvent({ type: 'eat', ...data }));
+  state.socket.on('foodEaten', data => renderEvent({ type: 'foodEaten', ...data }));
+  state.socket.on('gameOver', renderGameOver);
+  state.socket.on('rematch', renderRoom);
+  state.socket.on('returnToLobby', renderRoom);
+  state.socket.on('error', err => showError(err?.message || String(err || '服务器错误')));
+  state.socket.on('errorMessage', err => showError(err?.message || String(err || '服务器错误')));
+}
+function handleAck(name, ack) {
+  const data = normalizeAck(ack);
+  if (data.error) {
+    showError(data.error);
+    return;
+  }
+  if (data.roomId || data.playerId || data.playerToken) saveIdentity(data);
+  if (data.room) renderRoom(data.room);
+  if (data.roomState || data.players || data.phase) renderRoom(data);
+  if (data.latestSnapshot) renderSnapshot(data.latestSnapshot);
+  if (name === 'createRoom' || name === 'joinRoom') status(els.lobbyStatus, '进入房间成功，等待准备');
+  if (name === 'rematch' || name === 'returnToLobby') status(els.lobbyStatus, '已回到房间，等待重新准备');
+  if (name === 'startGame' && data.phase === 'lobby') status(els.lobbyStatus, '已回到房间，等待重新准备');
+}
+function reconnect() {
+  emit('reconnectPlayer', { roomId: state.roomId, playerId: state.playerId, playerToken: state.playerToken });
+}
+
+els.createBtn.onclick = () => emit('createRoom', identityPayload(), els.createBtn);
+els.showJoinBtn.onclick = () => { els.joinRow.hidden = !els.joinRow.hidden; };
+els.joinBtn.onclick = () => emit('joinRoom', { roomCode: els.roomCode.value.trim().toUpperCase(), ...identityPayload() }, els.joinBtn);
+els.readyBtn.onclick = () => emit('setReady', authPayload({ ready: !state.ready }), els.readyBtn);
+els.startBtn.onclick = () => {
+  const reason = els.startBtn.dataset.reason;
+  if (reason) { status(els.lobbyStatus, reason); return; }
+  emit('startGame', authPayload(), els.startBtn);
+};
+els.copyRoomBtn.onclick = async () => {
+  const text = els.roomIdText.textContent || state.roomId;
+  if (!text || text === '--') {
+    showError('当前还没有房间号');
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      status(els.lobbyStatus, `已复制房间号：${text}`);
+      return;
+    }
+  } catch (_err) {
+    // fall through to legacy copy path
+  }
+  const temp = document.createElement('textarea');
+  temp.value = text;
+  temp.setAttribute('readonly', 'readonly');
+  temp.style.position = 'fixed';
+  temp.style.left = '-9999px';
+  document.body.appendChild(temp);
+  temp.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(temp);
+  status(els.lobbyStatus, copied ? `已复制房间号：${text}` : '复制失败，请手动选中房间号');
+};
+els.againBtn.onclick = () => rematch();
+els.homeBtn.onclick = () => returnToLobby();
+els.exitRoomBtn.onclick = () => leaveRoom();
+els.exitRoomResultBtn.onclick = () => leaveRoom();
+const keyMap = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' };
+document.addEventListener('keydown', e => { if (keyMap[e.code]) { e.preventDefault(); sendInput(keyMap[e.code]); } });
+document.querySelectorAll('[data-dir]').forEach(b => b.onclick = () => sendInput(b.dataset.dir));
+function sendInput(direction) {
+  const now = Date.now();
+  if (now - state.lastInputAt < 70) return;
+  state.lastInputAt = now;
+  emit('input', authPayload({ inputSeq: ++state.inputSeq, direction, clientTime: now }));
+}
+
+function resetRoundView() {
+  state.snapshot = null;
+  state.lastSeq = -1;
+  state.inputSeq = 0;
+  state.lastInputAt = 0;
+  state.lastResults = [];
+  state.eventsSeen = new Set();
+  els.resultList.innerHTML = '';
+  els.eventLog.innerHTML = '';
+  els.leaderboard.innerHTML = '';
+  els.meText.textContent = '0 分 · 0 球 · 对战中';
+  els.timeText.textContent = '02:00';
+  els.spectatorNotice.hidden = true;
+  els.gamePanel.classList.remove('spectating', 'danger-flash');
+  els.banner.hidden = true;
+  els.banner.className = 'center-banner';
+  if (state.debug) els.debugPanel.textContent = `seq --\ntick --\nroom ${state.roomId || '--'}`;
+}
+function renderRoom(room = {}) {
+  const previousPhase = state.lastRoom?.phase || state.lastRoom?.roomState;
+  state.lastRoom = room;
+  state.roomId = room.roomId || room.id || state.roomId;
+  const phase = room.phase || room.roomState;
+  const players = room.players || [];
+  const lobbyIsClean = phase === 'lobby' && players.every(p => !isEliminated(p) && (p.score || 0) === 0 && (p.eatCount || 0) === 0 && !p.deathReason);
+  if (phase === 'countdown' || (phase === 'lobby' && (previousPhase === 'finished' || previousPhase === 'running' || lobbyIsClean))) resetRoundView();
+  if (phase === 'countdown' || phase === 'running') show('gamePanel'); else show('lobbyPanel');
+  els.roomIdText.textContent = room.roomCode || state.roomId || '--';
+  els.playerList.innerHTML = players.map(p => playerHtml(p)).join('') || '<p class="hint">等待玩家加入...</p>';
+  const me = players.find(p => p.playerId === state.playerId || p.id === state.playerId);
+  state.ready = Boolean(me?.isReady ?? me?.ready);
+  els.readyBtn.textContent = state.ready ? '取消准备' : '准备';
+  updateLobbyControls(room, players, me);
+}
+function playerHtml(p) {
+  const team = teamColor(p.country || p.countrySkin || p.teamId);
+  const connected = (p.connectionState || (p.connected === false ? 'disconnected' : 'connected')) === 'connected';
+  const ready = Boolean(p.isReady ?? p.ready);
+  const host = p.isHost ? '房主 · ' : '';
+  const stateText = `${host}${ready ? '已准备' : '未准备'} ${connected ? '' : '·掉线'} ${isEliminated(p) ? '·红牌' : ''}`;
+  return `<div class="player" style="--team:${team}"><span>${p.nickname || p.name || p.playerId || p.id}</span><strong>${stateText}</strong></div>`;
+}
+function updateLobbyControls(room = {}, players = [], me) {
+  const phase = room.phase || room.roomState || 'lobby';
+  const minPlayers = room.minPlayers || 2;
+  const maxPlayers = room.maxPlayers || 6;
+  const nonHostReady = players.filter(p => !p.isHost).every(p => Boolean(p.isReady ?? p.ready));
+  const isHost = Boolean(me?.isHost);
+  let reason = '';
+  if (!isHost) reason = '只有房主可以开始比赛';
+  else if (phase !== 'lobby') reason = '比赛已经开始';
+  else if (players.length < minPlayers) reason = `至少需要 ${minPlayers} 名玩家`;
+  else if (!nonHostReady) reason = '等待所有非房主玩家准备';
+  els.startBtn.disabled = Boolean(reason);
+  els.startBtn.dataset.reason = reason;
+  els.readyBtn.disabled = phase !== 'lobby';
+  status(els.lobbyStatus, phase === 'countdown' ? '即将开球...' : `房间 ${room.roomCode || state.roomId || '--'} · ${players.length}/${maxPlayers}${reason ? ' · ' + reason : ' · 可以开始'}`);
+}
+function renderSnapshot(snap = {}) {
+  const seq = snap.snapshotSeq ?? snap.serverTick ?? 0;
+  if (seq < state.lastSeq) {
+    const newRoundStarted = (snap.serverTick ?? seq) <= 2 && (snap.roomState || snap.status) === 'running';
+    if (!newRoundStarted) return;
+    resetRoundView();
+  }
+  state.lastSeq = seq;
+  state.snapshot = snap;
+  show('gamePanel');
+  els.timeText.textContent = fmtTime(snap.remainingMs ?? snap.timeLeft ?? 0);
+  draw(snap);
+  renderLeaderboard(snap.players || snap.scores || []);
+  const mine = (snap.players || []).find(p => p.playerId === state.playerId || p.id === state.playerId);
+  if (mine) {
+    els.meText.textContent = `${mine.score || 0} 分 · ${mine.eatCount || 0} 球 · ${isEliminated(mine) ? '已淘汰' : '对战中'}`;
+    updateSpectatorState(mine);
+  } else {
+    updateSpectatorState(null);
+  }
+  (snap.events || []).forEach(renderEvent);
+  if (state.debug) els.debugPanel.textContent = `seq ${snap.snapshotSeq ?? '--'}\ntick ${snap.serverTick ?? '--'}\nroom ${state.roomId || '--'}`;
+}
+function renderEvent(ev = {}) {
+  const key = `${ev.type}-${ev.playerId || ''}-${ev.foodId || ''}-${ev.tick || ev.serverTick || ''}-${ev.reason || ev.deathReason || ''}`;
+  if (state.eventsSeen.has(key)) return;
+  state.eventsSeen.add(key);
+  const playerIds = ev.playerIds || (ev.playerId ? [ev.playerId] : []);
+  const isMine = playerIds.includes(state.playerId);
+  if (ev.type === 'eliminated' || ev.type === 'playerEliminated') {
+    const reason = ev.reason || ev.deathReason;
+    const text = `${isMine ? '你' : '玩家'}淘汰：${reasonText(reason)}`;
+    logEvent(text);
+    if (isMine) eliminateFeedback(reason);
+  }
+  if (ev.type === 'eat' || ev.type === 'foodEaten') {
+    const value = ev.value ?? 10;
+    const label = ev.foodType === 'corpse' ? '尸体碎片' : '足球';
+    logEvent(`${isMine ? '你' : '玩家'}吃到${label} +${value}`);
+    scorePopAtGrid(ev.position || ev.foodPosition || ev.headPosition, value);
+  }
+  if (ev.type === 'gameOver' || ev.type === 'matchFinished') banner('比赛结束', '', 1800);
+}
+function renderLeaderboard(players = []) {
+  const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
+  els.leaderboard.innerHTML = sorted.slice(0, 6).map((p, i) => `<div class="rank-row ${isEliminated(p) ? 'eliminated' : ''}"><span class="dot" style="--team:${teamColor(p.country || p.countrySkin || p.teamId)}"></span><span>${i + 1}. ${p.nickname || p.name || p.playerId || p.id}</span><b>${p.score || 0}</b></div>`).join('');
+}
+function renderGameOver(data = {}) {
+  show('resultPanel');
+  state.lastResults = data.rankings || data.results || [];
+  const rows = state.lastResults;
+  els.resultList.innerHTML = rows.map((r, i) => {
+    const rank = r.rank || i + 1;
+    const mine = r.playerId === state.playerId || r.id === state.playerId;
+    const cls = `result-row ${rank === 1 ? 'winner' : ''} ${mine ? 'mine' : ''}`;
+    const outcome = reasonText(r.deathReason) || (r.aliveState === 'alive' || r.alive ? '存活到最后' : '淘汰');
+    return `<div class="${cls}"><b>${rank === 1 ? '🏆' : '#'+rank}</b><span>${r.nickname || r.name || r.playerId}<br><small>${outcome} · 吃球 ${r.eatCount ?? '--'} · ${Math.round((r.survivalMs || 0) / 1000)}s</small></span><strong>${r.score || 0}</strong></div>`;
+  }).join('') || '<p>暂无结算数据</p>';
+  updateReplayControls();
+  banner('比赛结束', '', 1800);
+}
+function leaveRoom() {
+  const oldSocket = state.socket;
+  if (oldSocket) {
+    oldSocket.removeAllListeners();
+    oldSocket.disconnect();
+  }
+  state.socket = null;
+  state.connected = false;
+  state.roomId = '';
+  state.playerId = '';
+  state.playerToken = '';
+  state.snapshot = null;
+  state.lastSeq = -1;
+  state.ready = false;
+  state.inputSeq = 0;
+  state.lastInputAt = 0;
+  state.lastRoom = null;
+  state.lastResults = [];
+  state.eventsSeen = new Set();
+  localStorage.removeItem('snake_wc_identity');
+  els.roomIdText.textContent = '--';
+  els.playerList.innerHTML = '';
+  els.resultList.innerHTML = '';
+  els.eventLog.innerHTML = '';
+  els.meText.textContent = '0 分 · 第 --';
+  els.timeText.textContent = '02:00';
+  els.netText.textContent = '未连接';
+  els.debugPanel.textContent = '';
+  els.spectatorNotice.hidden = true;
+  els.banner.hidden = true;
+  show('entryPanel');
+  status(els.entryStatus, '已退出房间，可以重新创建或加入');
+  status(els.lobbyStatus, '');
+  status(els.resultStatus, '');
+  connect();
+}
+function rematch() {
+  const me = getMeFromRoom();
+  if (!me?.isHost) {
+    status(els.resultStatus, '等待房主再开；你可以先返回房间准备下一局。');
+    returnToLobby();
+    return;
+  }
+  emit('rematch', authPayload(), els.againBtn);
+}
+function returnToLobby() {
+  emit('returnToLobby', authPayload(), els.homeBtn);
+}
+function updateReplayControls() {
+  const me = getMeFromRoom();
+  const isHost = Boolean(me?.isHost);
+  els.againBtn.textContent = isHost ? '再来一局' : '返回房间';
+  els.homeBtn.textContent = '返回房间';
+  status(els.resultStatus, isHost ? '房主可重开同一房间；其他玩家回房后重新准备。' : '等待房主再开；先返回房间查看玩家状态。');
+}
+function getMeFromRoom() {
+  const players = state.lastRoom?.players || [];
+  return players.find(p => p.playerId === state.playerId || p.id === state.playerId);
+}
+function banner(text, kind = '', duration = 1600) {
+  els.banner.hidden = false;
+  els.banner.className = `center-banner ${kind}`.trim();
+  els.banner.textContent = text;
+  clearTimeout(banner.t);
+  banner.t = setTimeout(() => { els.banner.hidden = true; els.banner.className = 'center-banner'; }, duration);
+}
+function eliminateFeedback(reason) {
+  const text = `🟥 ${reasonText(reason)}淘汰`;
+  banner(text, 'eliminated', 1500);
+  els.gamePanel.classList.add('danger-flash');
+  clearTimeout(eliminateFeedback.t);
+  eliminateFeedback.t = setTimeout(() => els.gamePanel.classList.remove('danger-flash'), 800);
+}
+function updateSpectatorState(player) {
+  const eliminated = Boolean(player && isEliminated(player));
+  els.gamePanel.classList.toggle('spectating', eliminated);
+  els.spectatorNotice.hidden = !eliminated;
+  if (eliminated) {
+    const rankText = player.rank ? `暂列第 ${player.rank}` : '等待排名';
+    els.spectatorNotice.textContent = `已淘汰，最终分数 ${player.score || 0}，${rankText}，等待本局结算`;
+  }
+}
+function scorePopAtGrid(pos, value = 10) {
+  const pop = document.createElement('div');
+  pop.className = 'score-pop';
+  pop.textContent = `+${value}`;
+  const rect = els.field.getBoundingClientRect();
+  if (pos) {
+    const p = point(pos);
+    pop.style.left = `${rect.left + ((p.x + .5) / 40) * rect.width}px`;
+    pop.style.top = `${rect.top + ((p.y + .5) / 28) * rect.height}px`;
+  } else {
+    pop.style.left = `${rect.left + rect.width / 2}px`;
+    pop.style.top = `${rect.top + rect.height / 2}px`;
+  }
+  document.body.appendChild(pop);
+  setTimeout(() => pop.remove(), 760);
+}
+function logEvent(text) {
+  const chip = document.createElement('div');
+  chip.className = 'event-chip';
+  chip.textContent = text;
+  els.eventLog.prepend(chip);
+  setTimeout(() => chip.remove(), 3000);
+}
+function isEliminated(p = {}) { return p.gameState === 'eliminated' || p.aliveState === 'eliminated' || p.alive === false; }
+function reasonText(r = '') {
+  return ({ wall: '撞墙', body: '撞到蛇身', headToHead: '头撞头', headOn: '头撞头', disconnectTimeout: '断线超时', disconnected: '断线' }[r] || r);
+}
+function fmtTime(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+function teamColor(id) { return (TEAMS.find(t => t[0] === id) || TEAMS[0])[2]; }
+
+const ctx = els.field.getContext('2d');
+function draw(snap = {}) {
+  const w = els.field.width, h = els.field.height, cw = w / 40, ch = h / 28;
+  ctx.clearRect(0, 0, w, h);
+  for (let y = 0; y < 28; y++) {
+    ctx.fillStyle = y % 2 ? '#11804a' : '#0d6b3b';
+    ctx.fillRect(0, y * ch, w, ch);
+  }
+  drawPitch(w, h);
+  (snap.foods || []).forEach(f => ball(f));
+  (snap.snakes || []).forEach(s => snake(s));
+}
+function drawPitch(w, h) {
+  ctx.strokeStyle = 'rgba(255,255,255,.88)';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(8, 8, w - 16, h - 16);
+  ctx.beginPath(); ctx.moveTo(w / 2, 8); ctx.lineTo(w / 2, h - 8); ctx.stroke();
+  ctx.beginPath(); ctx.arc(w / 2, h / 2, 90, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeRect(8, h * .28, 118, h * .44);
+  ctx.strokeRect(w - 126, h * .28, 118, h * .44);
+}
+function point(p) { return { x: p?.x ?? p?.[0] ?? 0, y: p?.y ?? p?.[1] ?? 0 }; }
+function ball(food) {
+  const p = point(food.position || food), cw = els.field.width / 40, ch = els.field.height / 28;
+  const r = Math.min(cw, ch) * (food.type === 'corpse' ? .24 : .32);
+  ctx.fillStyle = food.type === 'corpse' ? '#ffcf5a' : '#f8f8f8';
+  ctx.beginPath(); ctx.arc((p.x + .5) * cw, (p.y + .5) * ch, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = food.type === 'corpse' ? '#8b2f12' : '#111'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = food.type === 'corpse' ? '#8b2f12' : '#111'; ctx.beginPath(); ctx.arc((p.x + .5) * cw, (p.y + .5) * ch, r * .34, 0, Math.PI * 2); ctx.fill();
+}
+function snake(s) {
+  const team = teamColor(s.country || s.countrySkin || s.teamId), body = s.body || s.segments || [];
+  const cw = els.field.width / 40, ch = els.field.height / 28;
+  body.forEach((seg, i) => {
+    const p = point(seg);
+    ctx.fillStyle = i ? team : '#f6c443';
+    ctx.strokeStyle = i ? 'rgba(0,0,0,.35)' : team;
+    ctx.lineWidth = i ? 2 : 4;
+    roundRect(p.x * cw + 3, p.y * ch + 3, cw - 6, ch - 6, 10);
+    ctx.fill(); ctx.stroke();
+    if (i === 0) { ctx.fillStyle = '#10251c'; ctx.font = 'bold 14px sans-serif'; ctx.fillText('●', p.x * cw + cw * .38, p.y * ch + ch * .62); }
+  });
+}
+function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); }
+
+function startMock() {
+  show('lobbyPanel');
+  state.roomId = 'MOCK01';
+  renderRoom({ roomId: 'MOCK01', players: [{ nickname: '巴西闪电', country: 'bra', ready: true }, { nickname: '法国铁卫', country: 'fra', ready: true }, { nickname: '荷兰飞翼', country: 'ned', ready: false }] });
+  let seq = 0;
+  setInterval(() => {
+    seq += 1;
+    const head = 4 + (seq % 24);
+    renderSnapshot({
+      snapshotSeq: seq,
+      serverTick: seq,
+      remainingMs: Math.max(0, 120000 - seq * 500),
+      players: [
+        { playerId: '1', nickname: '巴西闪电', country: 'bra', score: 30 + seq, alive: true },
+        { playerId: '2', nickname: '法国铁卫', country: 'fra', score: 20, aliveState: seq > 18 ? 'eliminated' : 'alive', deathReason: 'wall' },
+        { playerId: '3', nickname: '荷兰飞翼', country: 'ned', score: 10, alive: true },
+      ],
+      snakes: [
+        { country: 'bra', body: [{ x: head, y: 5 }, { x: head - 1, y: 5 }, { x: head - 2, y: 5 }] },
+        { country: 'fra', body: [{ x: 22, y: 11 }, { x: 23, y: 11 }, { x: 24, y: 11 }] },
+        { country: 'ned', body: [{ x: 8, y: 21 }, { x: 8, y: 22 }, { x: 8, y: 23 }] },
+      ],
+      foods: [{ position: { x: 10, y: 8 } }, { position: { x: 28, y: 20 }, type: 'corpse', value: 5 }, { position: { x: 32, y: 6 } }],
+      events: seq === 2 ? [{ type: 'countdown', tick: seq }] : seq === 8 ? [{ type: 'eat', playerId: '1', position: { x: head, y: 5 }, tick: seq }] : seq === 20 ? [{ type: 'eliminated', playerId: '2', reason: 'wall', tick: seq }] : [],
+    });
+  }, 500);
+}
+connect();

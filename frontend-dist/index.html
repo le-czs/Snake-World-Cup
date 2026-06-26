@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>贪吃蛇世界杯 MVP</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <section class="panel" id="entryPanel">
+      <p class="eyebrow">Snake World Cup</p>
+      <h1>贪吃蛇世界杯</h1>
+      <p class="hint">房间制 2-6 人实时对战，服务端权威判定。</p>
+      <div class="badges"><span id="modeBadge">真实联机</span><span>120 秒</span><span>40 x 28</span></div>
+      <label>昵称 <input id="nickname" maxlength="16" placeholder="输入昵称" /></label>
+      <label>国家 <select id="country"></select></label>
+      <div class="actions">
+        <button id="createBtn">创建房间</button>
+        <button id="showJoinBtn" class="secondary">加入房间</button>
+      </div>
+      <div class="join-row" id="joinRow" hidden>
+        <input id="roomCode" maxlength="8" placeholder="房间码" />
+        <button id="joinBtn">确认加入</button>
+      </div>
+      <p class="status" id="entryStatus"></p>
+    </section>
+
+    <section class="panel lobby" id="lobbyPanel" hidden>
+      <div class="topline"><strong>房间 <span id="roomIdText">--</span></strong><div class="topline-actions"><button id="copyRoomBtn" class="ghost">复制</button><button id="exitRoomBtn" class="ghost">退出房间</button></div></div>
+      <div id="playerList" class="player-list"></div>
+      <div class="actions">
+        <button id="readyBtn">准备</button>
+        <button id="startBtn" class="secondary">开始比赛</button>
+      </div>
+      <p class="status" id="lobbyStatus">等待玩家准备...</p>
+      <details class="rules"><summary>本局规则</summary><p>普通足球 +10 分并增长 1 格；撞墙、撞蛇身、头撞头都会淘汰；最终排名以服务端结算为准。</p></details>
+    </section>
+
+    <section class="game" id="gamePanel" hidden>
+      <canvas id="field" width="1200" height="840"></canvas>
+      <div class="hud top-left"><span id="timeText">02:00</span></div>
+      <div class="hud top-right"><span id="netText">连接中</span></div>
+      <div class="hud bottom-left"><span id="meText">0 分 · 第 --</span></div>
+      <aside class="leaderboard" id="leaderboard"></aside>
+      <div class="spectator-notice" id="spectatorNotice" hidden>已淘汰，等待本局结算</div>
+      <div class="event-log" id="eventLog"></div>
+      <div class="center-banner" id="banner" hidden></div>
+      <div class="controls">
+        <button data-dir="up">▲</button>
+        <div><button data-dir="left">◀</button><button data-dir="right">▶</button></div>
+        <button data-dir="down">▼</button>
+      </div>
+    </section>
+
+    <section class="panel" id="resultPanel" hidden>
+      <h2>本局结算</h2>
+      <p class="hint">排名、分数、吃球数、存活时长均以服务端 gameOver 为准。</p>
+      <div id="resultList" class="result-list"></div>
+      <p class="status" id="resultStatus"></p>
+      <div class="actions"><button id="againBtn">再来一局</button><button id="homeBtn" class="secondary">返回房间</button><button id="exitRoomResultBtn" class="ghost">退出房间</button></div>
+    </section>
+    <pre class="debug" id="debugPanel"></pre>
+  </main>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

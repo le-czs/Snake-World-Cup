@@ -1,0 +1,16 @@
+[Unit]
+Description=Snake Worldcup Network MVP Socket.IO server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/snake-worldcup-network-mvp
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=CORS_ORIGIN=*
+ExecStart=/usr/bin/node dist/server/index.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
