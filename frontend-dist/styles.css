@@ -345,8 +345,9 @@ canvas { max-width: calc(100vw - 300px); max-height: calc(100vh - 64px); width: 
 .center-banner.lead { color: #10251c; background: linear-gradient(135deg, #f6c443, #fff7bf); padding: 20px 28px; border: 5px solid #102a56; }
 .center-banner.finish { color: #fff7bf; background: rgba(16,42,86,.94); padding: 24px 32px; border: 6px double var(--gold); text-shadow: 0 5px 0 rgba(0,0,0,.28); }
 .center-banner.error { color: #fff; background: rgba(217,45,32,.94); padding: 20px 28px; border: 4px solid rgba(255,255,255,.86); font-size: clamp(22px, 5vw, 44px); }
-.spectator-notice { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); z-index: 5; padding: 12px 18px; border-radius: 999px; background: rgba(217,45,32,.94); color: #fff; font-weight: 900; box-shadow: 0 12px 30px rgba(0,0,0,.22); }
+.spectator-notice { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); z-index: 5; max-width: min(520px, calc(100% - 220px)); padding: 12px 18px; border-radius: 999px; background: rgba(217,45,32,.94); color: #fff; font-weight: 900; text-align: center; box-shadow: 0 12px 30px rgba(0,0,0,.22); }
 .game.spectating canvas { filter: saturate(.45) brightness(.78); }
+.game.input-locked .controls button { opacity: .42; pointer-events: none; }
 .game.danger-flash::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: rgba(217,45,32,.22); animation: flashOut .7s ease forwards; }
 .controls { display: none; position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); text-align: center; gap: 6px; }
 .controls button { width: 62px; height: 50px; padding: 0; margin: 3px; }
@@ -407,6 +408,7 @@ canvas { max-width: calc(100vw - 300px); max-height: calc(100vh - 64px); width: 
   .leaderboard { width: auto; left: 12px; right: 12px; top: auto; bottom: 132px; max-height: 110px; overflow: auto; }
   .event-log { left: 12px; top: 58px; width: calc(100vw - 24px); }
   .center-banner.corpse, .center-banner.redcard, .center-banner.finish, .center-banner.lead { max-width: calc(100vw - 28px); font-size: clamp(24px, 9vw, 56px); }
+  .spectator-notice { top: 12px; max-width: calc(100vw - 24px); border-radius: 16px; padding: 10px 12px; font-size: 13px; }
   .key-moments span { display: grid; }
   .debug { display: none !important; }
   .bottom-left { bottom: 80px; }

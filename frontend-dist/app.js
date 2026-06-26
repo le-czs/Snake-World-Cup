@@ -26,6 +26,7 @@ const state = {
   lastRankByPlayer: new Map(),
   lastLeaderId: '',
   lastSfxAt: new Map(),
+  isInputLocked: false,
 };
 Object.assign(state, JSON.parse(localStorage.getItem('snake_wc_identity') || '{}'));
 
@@ -193,6 +194,7 @@ const keyMap = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', Arr
 document.addEventListener('keydown', e => { if (keyMap[e.code]) { e.preventDefault(); sendInput(keyMap[e.code]); } });
 document.querySelectorAll('[data-dir]').forEach(b => b.onclick = () => sendInput(b.dataset.dir));
 function sendInput(direction) {
+  if (state.isInputLocked) return;
   const now = Date.now();
   if (now - state.lastInputAt < 70) return;
   state.lastInputAt = now;
@@ -219,6 +221,7 @@ function resetRoundView() {
   els.timeText.textContent = '02:00';
   els.spectatorNotice.hidden = true;
   els.gamePanel.classList.remove('spectating', 'danger-flash');
+  updateInputLock(false);
   els.banner.hidden = true;
   els.banner.className = 'center-banner';
   if (state.debug) els.debugPanel.textContent = `seq --\ntick --\nroom ${state.roomId || '--'}`;
@@ -275,12 +278,15 @@ function renderSnapshot(snap = {}) {
   show('gamePanel');
   els.timeText.textContent = fmtTime(snap.remainingMs ?? snap.timeLeft ?? 0);
   draw(snap);
-  detectScoreAndRankChanges(snap.players || snap.scores || []);
-  renderLeaderboard(snap.players || snap.scores || []);
-  const mine = (snap.players || []).find(p => p.playerId === state.playerId || p.id === state.playerId);
+  const players = snap.players || [];
+  const scores = snap.scores || [];
+  detectScoreAndRankChanges(players.length ? players : scores);
+  renderLeaderboard(players.length ? players : scores);
+  const mine = players.find(p => p.playerId === state.playerId || p.id === state.playerId);
   if (mine) {
+    const mineRank = rankForPlayer(state.playerId, players, scores);
     els.meText.textContent = `${mine.score || 0} 分 · ${mine.eatCount || 0} 球 · ${isEliminated(mine) ? '已淘汰' : '对战中'}`;
-    updateSpectatorState(mine);
+    updateSpectatorState(mine, mineRank);
   } else {
     updateSpectatorState(null);
   }
@@ -413,6 +419,7 @@ function leaveRoom() {
   els.netText.textContent = '未连接';
   els.debugPanel.textContent = '';
   els.spectatorNotice.hidden = true;
+  updateInputLock(false);
   els.banner.hidden = true;
   show('entryPanel');
   status(els.entryStatus, '已退出房间，可以重新创建或加入');
@@ -457,14 +464,27 @@ function eliminateFeedback(reason) {
   clearTimeout(eliminateFeedback.t);
   eliminateFeedback.t = setTimeout(() => els.gamePanel.classList.remove('danger-flash'), 800);
 }
-function updateSpectatorState(player) {
+function updateSpectatorState(player, rank) {
   const eliminated = Boolean(player && isEliminated(player));
   els.gamePanel.classList.toggle('spectating', eliminated);
+  updateInputLock(eliminated);
   els.spectatorNotice.hidden = !eliminated;
   if (eliminated) {
-    const rankText = player.rank ? `暂列第 ${player.rank}` : '等待排名';
+    const rankText = rank ? `暂列第 ${rank}` : '等待排名';
     els.spectatorNotice.textContent = `已淘汰，最终分数 ${player.score || 0}，${rankText}，等待本局结算`;
   }
+}
+function updateInputLock(locked) {
+  state.isInputLocked = Boolean(locked);
+  els.gamePanel.classList.toggle('input-locked', state.isInputLocked);
+  document.querySelectorAll('[data-dir]').forEach(button => { button.disabled = state.isInputLocked; });
+}
+function rankForPlayer(playerId, players = [], scores = []) {
+  const direct = [...scores, ...players].find(p => (p.playerId || p.id) === playerId && p.rank);
+  if (direct) return direct.rank;
+  const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
+  const index = sorted.findIndex(p => (p.playerId || p.id) === playerId);
+  return index >= 0 ? index + 1 : null;
 }
 function scorePopAtGrid(pos, value = 10, kind = 'normal') {
   const pop = document.createElement('div');
