@@ -8,22 +8,60 @@
 </head>
 <body>
   <main class="shell">
-    <section class="panel" id="entryPanel">
-      <p class="eyebrow">Snake World Cup</p>
-      <h1>贪吃蛇世界杯</h1>
-      <p class="hint">房间制 2-6 人实时对战，服务端权威判定。</p>
-      <div class="badges"><span id="modeBadge">真实联机</span><span>120 秒</span><span>40 x 28</span></div>
-      <label>昵称 <input id="nickname" maxlength="16" placeholder="输入昵称" /></label>
-      <label>国家 <select id="country"></select></label>
-      <div class="actions">
-        <button id="createBtn">创建房间</button>
-        <button id="showJoinBtn" class="secondary">加入房间</button>
+    <section class="entry-stage" id="entryPanel">
+      <div class="entry-hero" aria-hidden="true">
+        <div class="hero-copy">
+          <p class="eyebrow">OPEN QUALIFIER · SNAKE WORLD CUP</p>
+          <h1><span>贪吃蛇</span><span>世界杯</span></h1>
+          <p class="hero-subtitle">带着你的国家队入场，120 秒抢球、截杀、冲榜。</p>
+        </div>
+        <div class="stadium-poster">
+          <div class="poster-badge">LIVE<br />KICKOFF</div>
+          <div class="pixel-sun"></div>
+          <div class="snake-ribbon snake-ribbon-a"></div>
+          <div class="snake-ribbon snake-ribbon-b"></div>
+          <div class="snake-head">
+            <span class="eye eye-left"></span>
+            <span class="eye eye-right"></span>
+            <span class="fang fang-left"></span>
+            <span class="fang fang-right"></span>
+          </div>
+          <div class="world-ball"><span></span><span></span><span></span></div>
+          <div class="goal-net"></div>
+          <div class="flag-row"><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
       </div>
-      <div class="join-row" id="joinRow" hidden>
-        <input id="roomCode" maxlength="8" placeholder="房间码" />
-        <button id="joinBtn">确认加入</button>
+
+      <div class="entry-card">
+        <div class="card-header">
+          <div>
+            <p class="eyebrow">PLAYER CARD</p>
+            <h2>选择你的蛇队</h2>
+          </div>
+          <div class="badges"><span id="modeBadge">真实联机</span><span>2-6 人</span><span>40 x 28</span></div>
+        </div>
+        <label>昵称 <input id="nickname" maxlength="16" placeholder="输入昵称" /></label>
+        <label>国家 <select id="country"></select></label>
+        <div class="actions entry-actions">
+          <button id="createBtn">创建房间</button>
+          <button id="showJoinBtn" class="secondary">加入房间</button>
+        </div>
+        <div class="join-row" id="joinRow" hidden>
+          <input id="roomCode" maxlength="8" placeholder="房间码" />
+          <button id="joinBtn">确认加入</button>
+        </div>
+        <p class="status" id="entryStatus"></p>
       </div>
-      <p class="status" id="entryStatus"></p>
+
+      <aside class="live-preview" aria-hidden="true">
+        <div class="preview-title"><span>LIVE PREVIEW</span><strong>00:58</strong></div>
+        <div class="mini-pitch">
+          <i class="mini-snake mini-snake-a"></i>
+          <i class="mini-snake mini-snake-b"></i>
+          <i class="mini-food"></i>
+        </div>
+        <div class="preview-feed"><span>巴西 +10</span><span>法国 红牌</span><span>阿根廷 冲到第 1</span></div>
+      </aside>
     </section>
 
     <section class="panel lobby" id="lobbyPanel" hidden>
