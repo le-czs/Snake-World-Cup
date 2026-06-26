@@ -22,6 +22,10 @@ const state = {
   lastInputAt: 0,
   lastRoom: null,
   lastResults: [],
+  lastPlayerScores: new Map(),
+  lastRankByPlayer: new Map(),
+  lastLeaderId: '',
+  lastSfxAt: new Map(),
 };
 Object.assign(state, JSON.parse(localStorage.getItem('snake_wc_identity') || '{}'));
 
@@ -107,7 +111,8 @@ function connect() {
     show('gamePanel');
     const remaining = Math.ceil((data?.remainingMs ?? 0) / 1000);
     const text = remaining > 0 ? remaining : '开球！';
-    banner(`${text}\n准备抢球`, 'countdown', 900);
+    banner(`${text}\n准备抢球`, 'countdown', remaining > 0 ? 860 : 1200);
+    cueSfx(remaining > 0 ? 'countdown' : 'kickoff', { channel: 'commentary' });
   });
   state.socket.on('gameSnapshot', renderSnapshot);
   state.socket.on('playerStatus', data => {
@@ -119,6 +124,8 @@ function connect() {
   state.socket.on('playerEliminated', data => renderEvent({ type: 'playerEliminated', ...data }));
   state.socket.on('eat', data => renderEvent({ type: 'eat', ...data }));
   state.socket.on('foodEaten', data => renderEvent({ type: 'foodEaten', ...data }));
+  state.socket.on('corpseEaten', data => renderEvent({ type: 'corpseEaten', foodType: 'corpse', value: 5, ...data }));
+  state.socket.on('leadChanged', data => renderEvent({ type: 'leadChanged', ...data }));
   state.socket.on('gameOver', renderGameOver);
   state.socket.on('rematch', renderRoom);
   state.socket.on('returnToLobby', renderRoom);
@@ -198,9 +205,15 @@ function resetRoundView() {
   state.inputSeq = 0;
   state.lastInputAt = 0;
   state.lastResults = [];
+  state.lastPlayerScores = new Map();
+  state.lastRankByPlayer = new Map();
+  state.lastLeaderId = '';
   state.eventsSeen = new Set();
   els.resultList.innerHTML = '';
   els.eventLog.innerHTML = '';
+  els.keyMoments.hidden = true;
+  els.keyMoments.innerHTML = '';
+  if (els.resultHero) els.resultHero.innerHTML = '<span>FINAL WHISTLE</span><strong>冠军待定</strong><small>等待服务端结算</small>';
   els.leaderboard.innerHTML = '';
   els.meText.textContent = '0 分 · 0 球 · 对战中';
   els.timeText.textContent = '02:00';
@@ -262,6 +275,7 @@ function renderSnapshot(snap = {}) {
   show('gamePanel');
   els.timeText.textContent = fmtTime(snap.remainingMs ?? snap.timeLeft ?? 0);
   draw(snap);
+  detectScoreAndRankChanges(snap.players || snap.scores || []);
   renderLeaderboard(snap.players || snap.scores || []);
   const mine = (snap.players || []).find(p => p.playerId === state.playerId || p.id === state.playerId);
   if (mine) {
@@ -274,42 +288,96 @@ function renderSnapshot(snap = {}) {
   if (state.debug) els.debugPanel.textContent = `seq ${snap.snapshotSeq ?? '--'}\ntick ${snap.serverTick ?? '--'}\nroom ${state.roomId || '--'}`;
 }
 function renderEvent(ev = {}) {
-  const key = `${ev.type}-${ev.playerId || ''}-${ev.foodId || ''}-${ev.tick || ev.serverTick || ''}-${ev.reason || ev.deathReason || ''}`;
+  const key = `${ev.type}-${ev.playerId || ''}-${(ev.playerIds || []).join('.')}-${ev.foodId || ''}-${ev.tick || ev.serverTick || ''}-${ev.reason || ev.deathReason || ''}`;
   if (state.eventsSeen.has(key)) return;
   state.eventsSeen.add(key);
   const playerIds = ev.playerIds || (ev.playerId ? [ev.playerId] : []);
   const isMine = playerIds.includes(state.playerId);
   if (ev.type === 'eliminated' || ev.type === 'playerEliminated') {
     const reason = ev.reason || ev.deathReason;
-    const text = `${isMine ? '你' : '玩家'}淘汰：${reasonText(reason)}`;
-    logEvent(text);
+    const deadName = playerName(ev.playerId || playerIds[0]);
+    const text = `${isMine ? '你' : deadName}红牌：${reasonText(reason)}`;
+    logEvent(text, 'danger');
+    cueSfx(isMine ? 'eliminated' : 'red-card', { channel: 'commentary' });
     if (isMine) eliminateFeedback(reason);
+    else banner(`🟥 ${deadName}\n${reasonText(reason)}淘汰`, 'redcard', 1400);
   }
-  if (ev.type === 'eat' || ev.type === 'foodEaten') {
-    const value = ev.value ?? 10;
-    const label = ev.foodType === 'corpse' ? '尸体碎片' : '足球';
-    logEvent(`${isMine ? '你' : '玩家'}吃到${label} +${value}`);
-    scorePopAtGrid(ev.position || ev.foodPosition || ev.headPosition, value);
+  if (ev.type === 'eat' || ev.type === 'foodEaten' || ev.type === 'corpseEaten') {
+    const value = ev.value ?? (ev.foodType === 'corpse' ? 5 : 10);
+    const isCorpse = ev.foodType === 'corpse' || ev.type === 'corpseEaten';
+    const label = isCorpse ? '尸体球' : '足球';
+    const eaterName = playerName(ev.playerId || playerIds[0]);
+    logEvent(`${isMine ? '你' : eaterName}吃到${label} +${value}`, isCorpse ? 'corpse' : 'score');
+    scorePopAtGrid(ev.position || ev.foodPosition || ev.headPosition, value, isCorpse ? 'corpse' : 'normal');
+    if (isCorpse) corpseClaimFeedback(ev, isMine, eaterName, value);
+    else cueSfx('eat');
   }
-  if (ev.type === 'gameOver' || ev.type === 'matchFinished') banner('比赛结束', '', 1800);
+  if (ev.type === 'leadChanged') {
+    const leaderId = ev.playerId || ev.leaderId || ev.playerIds?.[0];
+    if (leaderId) announceLeader(leaderId, ev.previousLeaderId);
+  }
+  if (ev.type === 'gameOver' || ev.type === 'matchFinished') {
+    banner('比赛结束', 'finish', 1800);
+    cueSfx('finish', { channel: 'commentary' });
+  }
 }
 function renderLeaderboard(players = []) {
   const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
-  els.leaderboard.innerHTML = sorted.slice(0, 6).map((p, i) => `<div class="rank-row ${isEliminated(p) ? 'eliminated' : ''}"><span class="dot" style="--team:${teamColor(p.country || p.countrySkin || p.teamId)}"></span><span>${i + 1}. ${p.nickname || p.name || p.playerId || p.id}</span><b>${p.score || 0}</b></div>`).join('');
+  els.leaderboard.innerHTML = sorted.slice(0, 6).map((p, i) => {
+    const id = p.playerId || p.id;
+    const previousRank = state.lastRankByPlayer.get(id);
+    const movedUp = previousRank && previousRank > i + 1;
+    const cls = `rank-row ${isEliminated(p) ? 'eliminated' : ''} ${movedUp ? 'rank-up' : ''}`;
+    return `<div class="${cls}"><span class="dot" style="--team:${teamColor(p.country || p.countrySkin || p.teamId)}"></span><span>${i + 1}. ${p.nickname || p.name || p.playerId || p.id}</span><b>${p.score || 0}</b></div>`;
+  }).join('');
+  state.lastRankByPlayer = new Map(sorted.map((p, i) => [p.playerId || p.id, i + 1]));
+}
+function detectScoreAndRankChanges(players = []) {
+  if (!players.length) return;
+  const sorted = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
+  const leader = sorted[0];
+  const leaderId = leader?.playerId || leader?.id;
+  if (leaderId && state.lastLeaderId && leaderId !== state.lastLeaderId) announceLeader(leaderId, state.lastLeaderId);
+  if (leaderId) state.lastLeaderId = leaderId;
+  players.forEach(p => {
+    const id = p.playerId || p.id;
+    const nextScore = p.score || 0;
+    const previousScore = state.lastPlayerScores.get(id);
+    if (previousScore !== undefined && nextScore > previousScore) {
+      const delta = nextScore - previousScore;
+      logEvent(`${id === state.playerId ? '你' : playerName(id)}分数 +${delta}`, delta === 5 ? 'corpse' : 'score');
+      if (id === state.playerId) scorePopAtGrid(null, delta, delta === 5 ? 'corpse' : 'normal');
+    }
+    state.lastPlayerScores.set(id, nextScore);
+  });
+}
+function announceLeader(leaderId, previousLeaderId) {
+  if (!leaderId || leaderId === previousLeaderId) return;
+  const name = playerName(leaderId);
+  const mine = leaderId === state.playerId;
+  logEvent(`${mine ? '你' : name}冲到第一！`, 'lead');
+  banner(`${mine ? '你' : name}\n领跑全场`, 'lead', 1300);
+  cueSfx('lead', { channel: 'commentary' });
 }
 function renderGameOver(data = {}) {
   show('resultPanel');
   state.lastResults = data.rankings || data.results || [];
-  const rows = state.lastResults;
+  const rows = [...state.lastResults].sort((a, b) => (a.rank || 99) - (b.rank || 99));
+  const winner = rows[0];
+  if (els.resultHero && winner) {
+    els.resultHero.innerHTML = `<span>FINAL WHISTLE</span><strong>${winner.nickname || winner.name || winner.playerId} 夺冠</strong><small>${winner.score || 0} 分 · ${winner.aliveState === 'alive' || winner.alive ? '存活到终场' : '积分制胜'}</small>`;
+  }
   els.resultList.innerHTML = rows.map((r, i) => {
     const rank = r.rank || i + 1;
     const mine = r.playerId === state.playerId || r.id === state.playerId;
     const cls = `result-row ${rank === 1 ? 'winner' : ''} ${mine ? 'mine' : ''}`;
     const outcome = reasonText(r.deathReason) || (r.aliveState === 'alive' || r.alive ? '存活到最后' : '淘汰');
-    return `<div class="${cls}"><b>${rank === 1 ? '🏆' : '#'+rank}</b><span>${r.nickname || r.name || r.playerId}<br><small>${outcome} · 吃球 ${r.eatCount ?? '--'} · ${Math.round((r.survivalMs || 0) / 1000)}s</small></span><strong>${r.score || 0}</strong></div>`;
+    return `<div class="${cls}"><b>${rank === 1 ? '🏆' : '#'+rank}</b><span>${r.nickname || r.name || r.playerId}<br><small>${outcome} · 吃球 ${r.eatCount ?? r.eaten ?? '--'} · ${Math.round((r.survivalMs || 0) / 1000)}s</small></span><strong>${r.score || 0}</strong></div>`;
   }).join('') || '<p>暂无结算数据</p>';
+  renderKeyMoments(data.keyMoments || data.moments || [], rows);
   updateReplayControls();
-  banner('比赛结束', '', 1800);
+  banner(winner ? `🏆 ${winner.nickname || winner.name || '冠军'}\n${winner.score || 0} 分封王` : '比赛结束', 'finish', 2200);
+  cueSfx('champion', { channel: 'commentary' });
 }
 function leaveRoom() {
   const oldSocket = state.socket;
@@ -329,12 +397,17 @@ function leaveRoom() {
   state.lastInputAt = 0;
   state.lastRoom = null;
   state.lastResults = [];
+  state.lastPlayerScores = new Map();
+  state.lastRankByPlayer = new Map();
+  state.lastLeaderId = '';
   state.eventsSeen = new Set();
   localStorage.removeItem('snake_wc_identity');
   els.roomIdText.textContent = '--';
   els.playerList.innerHTML = '';
   els.resultList.innerHTML = '';
   els.eventLog.innerHTML = '';
+  els.keyMoments.hidden = true;
+  els.keyMoments.innerHTML = '';
   els.meText.textContent = '0 分 · 第 --';
   els.timeText.textContent = '02:00';
   els.netText.textContent = '未连接';
@@ -393,9 +466,9 @@ function updateSpectatorState(player) {
     els.spectatorNotice.textContent = `已淘汰，最终分数 ${player.score || 0}，${rankText}，等待本局结算`;
   }
 }
-function scorePopAtGrid(pos, value = 10) {
+function scorePopAtGrid(pos, value = 10, kind = 'normal') {
   const pop = document.createElement('div');
-  pop.className = 'score-pop';
+  pop.className = `score-pop ${kind}`;
   pop.textContent = `+${value}`;
   const rect = els.field.getBoundingClientRect();
   if (pos) {
@@ -409,12 +482,48 @@ function scorePopAtGrid(pos, value = 10) {
   document.body.appendChild(pop);
   setTimeout(() => pop.remove(), 760);
 }
-function logEvent(text) {
+function logEvent(text, kind = '') {
   const chip = document.createElement('div');
-  chip.className = 'event-chip';
+  chip.className = `event-chip ${kind}`.trim();
   chip.textContent = text;
   els.eventLog.prepend(chip);
   setTimeout(() => chip.remove(), 3000);
+}
+function corpseClaimFeedback(ev, isMine, eaterName, value) {
+  const ownerId = ev.ownerPlayerId || ev.deadPlayerId || ev.victimPlayerId;
+  const ownedByMe = ownerId === state.playerId;
+  const title = isMine ? `尸体球 +${value}` : ownedByMe ? '你的尸体被抢！' : `${eaterName} 抢到尸体`;
+  banner(`${title}\n+${value} 不增长`, 'corpse', 1500);
+  cueSfx('corpse', { channel: 'commentary' });
+}
+function renderKeyMoments(moments = [], rows = []) {
+  const fallback = rows.slice(0, 3).map(r => ({ label: `${r.rank || ''} ${r.nickname || r.name || r.playerId}`, detail: `${r.score || 0} 分 · ${reasonText(r.deathReason) || '存活争冠'}` }));
+  const list = moments.length ? moments : fallback;
+  els.keyMoments.hidden = !list.length;
+  els.keyMoments.innerHTML = list.length ? `<strong>KEY MOMENTS</strong>${list.slice(0, 4).map(item => `<span>${item.label || item.title || momentText(item)}<small>${item.detail || item.description || ''}</small></span>`).join('')}` : '';
+}
+function momentText(item = {}) {
+  if (typeof item === 'string') return item;
+  if (item.type === 'foodEaten' || item.type === 'corpseEaten') return `${playerName(item.playerId)} +${item.value || 5}`;
+  if (item.type === 'playerEliminated') return `${playerName(item.playerId)} ${reasonText(item.reason || item.deathReason)}淘汰`;
+  return item.type || '关键回合';
+}
+function playerName(id) {
+  if (!id) return '玩家';
+  const pools = [state.snapshot?.players || [], state.lastRoom?.players || [], state.lastResults || []];
+  for (const players of pools) {
+    const player = players.find(p => (p.playerId || p.id) === id);
+    if (player) return player.nickname || player.name || id;
+  }
+  return id;
+}
+function cueSfx(name, options = {}) {
+  if (!name) return;
+  const now = Date.now();
+  const key = `${options.channel || 'sfx'}:${name}`;
+  if (now - (state.lastSfxAt.get(key) || 0) < 180) return;
+  state.lastSfxAt.set(key, now);
+  if (typeof window.playSfx === 'function') window.playSfx(name, options);
 }
 function isEliminated(p = {}) { return p.gameState === 'eliminated' || p.aliveState === 'eliminated' || p.alive === false; }
 function reasonText(r = '') {
@@ -450,11 +559,28 @@ function drawPitch(w, h) {
 function point(p) { return { x: p?.x ?? p?.[0] ?? 0, y: p?.y ?? p?.[1] ?? 0 }; }
 function ball(food) {
   const p = point(food.position || food), cw = els.field.width / 40, ch = els.field.height / 28;
-  const r = Math.min(cw, ch) * (food.type === 'corpse' ? .24 : .32);
-  ctx.fillStyle = food.type === 'corpse' ? '#ffcf5a' : '#f8f8f8';
-  ctx.beginPath(); ctx.arc((p.x + .5) * cw, (p.y + .5) * ch, r, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = food.type === 'corpse' ? '#8b2f12' : '#111'; ctx.lineWidth = 2; ctx.stroke();
-  ctx.fillStyle = food.type === 'corpse' ? '#8b2f12' : '#111'; ctx.beginPath(); ctx.arc((p.x + .5) * cw, (p.y + .5) * ch, r * .34, 0, Math.PI * 2); ctx.fill();
+  const isCorpse = food.type === 'corpse';
+  const cx = (p.x + .5) * cw;
+  const cy = (p.y + .5) * ch;
+  const r = Math.min(cw, ch) * (isCorpse ? .38 : .32);
+  if (isCorpse) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(255, 80, 40, .95)';
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = '#ff6b35';
+    ctx.beginPath(); ctx.arc(cx, cy, r * 1.25, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  ctx.fillStyle = isCorpse ? '#ffcf5a' : '#f8f8f8';
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = isCorpse ? '#8b2f12' : '#111'; ctx.lineWidth = isCorpse ? 4 : 2; ctx.stroke();
+  ctx.fillStyle = isCorpse ? '#8b2f12' : '#111'; ctx.beginPath(); ctx.arc(cx, cy, r * .34, 0, Math.PI * 2); ctx.fill();
+  if (isCorpse) {
+    ctx.fillStyle = '#fff7bf';
+    ctx.font = '900 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('+5', cx, cy - r - 6);
+  }
 }
 function snake(s) {
   const team = teamColor(s.country || s.countrySkin || s.teamId), body = s.body || s.segments || [];
@@ -494,7 +620,7 @@ function startMock() {
         { country: 'ned', body: [{ x: 8, y: 21 }, { x: 8, y: 22 }, { x: 8, y: 23 }] },
       ],
       foods: [{ position: { x: 10, y: 8 } }, { position: { x: 28, y: 20 }, type: 'corpse', value: 5 }, { position: { x: 32, y: 6 } }],
-      events: seq === 2 ? [{ type: 'countdown', tick: seq }] : seq === 8 ? [{ type: 'eat', playerId: '1', position: { x: head, y: 5 }, tick: seq }] : seq === 20 ? [{ type: 'eliminated', playerId: '2', reason: 'wall', tick: seq }] : [],
+      events: seq === 2 ? [{ type: 'countdown', tick: seq }] : seq === 8 ? [{ type: 'eat', playerId: '1', position: { x: head, y: 5 }, tick: seq }] : seq === 14 ? [{ type: 'foodEaten', playerId: '1', position: { x: 28, y: 20 }, foodType: 'corpse', value: 5, ownerPlayerId: '2', tick: seq }] : seq === 20 ? [{ type: 'eliminated', playerId: '2', reason: 'wall', tick: seq }] : seq === 24 ? [{ type: 'leadChanged', playerId: '1', previousLeaderId: '2', tick: seq }] : [],
     });
   }, 500);
 }

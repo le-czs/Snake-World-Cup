@@ -72,7 +72,7 @@
         <button id="startBtn" class="secondary">开始比赛</button>
       </div>
       <p class="status" id="lobbyStatus">等待玩家准备...</p>
-      <details class="rules"><summary>本局规则</summary><p>普通足球 +10 分并增长 1 格；撞墙、撞蛇身、头撞头都会淘汰；最终排名以服务端结算为准。</p></details>
+      <details class="rules"><summary>本局规则</summary><p>普通足球 +10 分并增长 1 格；淘汰蛇会掉落 10 秒尸体球，抢到 +5 不增长；撞墙、撞蛇身、头撞头都会红牌淘汰，最终排名以服务端结算为准。</p></details>
     </section>
 
     <section class="game" id="gamePanel" hidden>
@@ -94,7 +94,9 @@
     <section class="panel" id="resultPanel" hidden>
       <h2>本局结算</h2>
       <p class="hint">排名、分数、吃球数、存活时长均以服务端 gameOver 为准。</p>
+      <div class="result-hero" id="resultHero"><span>FINAL WHISTLE</span><strong>冠军待定</strong><small>等待服务端结算</small></div>
       <div id="resultList" class="result-list"></div>
+      <div id="keyMoments" class="key-moments" hidden></div>
       <p class="status" id="resultStatus"></p>
       <div class="actions"><button id="againBtn">再来一局</button><button id="homeBtn" class="secondary">返回房间</button><button id="exitRoomResultBtn" class="ghost">退出房间</button></div>
     </section>
