@@ -499,3 +499,12 @@ canvas { max-width: calc(100vw - 300px); max-height: calc(100vh - 64px); width: 
   .appearance-player > strong { grid-column: 2; }
   .snake-mini { width: 92px; transform: scale(.9); transform-origin: left center; }
 }
+
+.result-row { grid-template-columns: 40px auto 1fr auto; align-items: center; }
+.result-row em { display: block; margin-top: 4px; color: #476457; font-size: 12px; font-style: normal; font-weight: 900; }
+.result-snake { width: 92px; transform: scale(.86); transform-origin: left center; }
+@media (max-width: 820px) {
+  .result-row { grid-template-columns: 34px auto 1fr; }
+  .result-row > strong:last-child { grid-column: 3; }
+  .result-snake { width: 80px; transform: scale(.78); }
+}

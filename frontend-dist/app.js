@@ -117,9 +117,20 @@ function normalizeAppearance(source = {}) {
   return { ...makeAppearance(country, skinId), ...nested, country, skinId: skinById(skinId)[0] };
 }
 function playerKey(p = {}) { return p.playerId || p.id || p.socketId || p.userId || ''; }
+function findPlayerById(id) {
+  if (!id) return null;
+  const pools = [state.snapshot?.players || [], state.lastRoom?.players || [], state.lastResults || []];
+  for (const players of pools) {
+    const found = players.find(p => playerKey(p) === id);
+    if (found) return found;
+  }
+  return null;
+}
 function appearanceOf(source = {}) {
-  if (playerKey(source) && playerKey(source) === state.playerId) return normalizeAppearance({ ...source, appearance: source.appearance || state.appearance });
-  return normalizeAppearance(source);
+  const owner = findPlayerById(playerKey(source));
+  const merged = { ...(owner || {}), ...source, appearance: source.appearance || owner?.appearance };
+  if (playerKey(merged) && playerKey(merged) === state.playerId) return normalizeAppearance({ ...merged, appearance: merged.appearance || state.appearance });
+  return normalizeAppearance(merged);
 }
 function teamName(id) { return teamById(id)[1]; }
 function skinName(id) { return skinById(id)[1]; }
@@ -131,6 +142,7 @@ function miniSnakeHtml(source = {}, className = '') {
   const vars = `--snake-primary:${a.primaryColor};--snake-secondary:${a.secondaryColor};--snake-accent:${a.accent}`;
   return `<span class="snake-mini ${className} skin-${a.skinId}" style="${vars}" aria-hidden="true"><i></i><i></i><i></i><i></i></span>`;
 }
+function titleForResult(rank) { return rank === 1 ? '冠军候选' : '称号待解锁'; }
 function updateEntryPreview(feedback = '已同步') {
   const a = saveAppearance();
   els.previewName.textContent = els.nickname.value.trim() || '球员';
@@ -466,7 +478,7 @@ function announceLeader(leaderId, previousLeaderId) {
 }
 function renderGameOver(data = {}) {
   show('resultPanel');
-  state.lastResults = data.rankings || data.results || [];
+  state.lastResults = data.results || data.rankings || [];
   const rows = [...state.lastResults].sort((a, b) => (a.rank || 99) - (b.rank || 99));
   const winner = rows[0];
   if (els.resultHero && winner) {
@@ -477,7 +489,10 @@ function renderGameOver(data = {}) {
     const mine = r.playerId === state.playerId || r.id === state.playerId;
     const cls = `result-row ${rank === 1 ? 'winner' : ''} ${mine ? 'mine' : ''}`;
     const outcome = reasonText(r.deathReason) || (r.aliveState === 'alive' || r.alive ? '存活到最后' : '淘汰');
-    return `<div class="${cls}"><b>${rank === 1 ? '🏆' : '#'+rank}</b><span>${r.nickname || r.name || r.playerId}<br><small>${outcome} · 吃球 ${r.eatCount ?? r.eaten ?? '--'} · ${Math.round((r.survivalMs || 0) / 1000)}s</small></span><strong>${r.score || 0}</strong></div>`;
+    const name = escapeHtml(r.nickname || r.name || r.playerId || '球员');
+    const a = appearanceOf(r);
+    const title = r.title && r.title !== '新秀' ? r.title : titleForResult(rank);
+    return `<div class="${cls}"><b>${rank === 1 ? '🏆' : '#'+rank}</b>${miniSnakeHtml(r, 'result-snake')}<span>${name}<br><small>${outcome} · 吃球 ${r.eatCount ?? r.eaten ?? '--'} · ${Math.round((r.survivalMs || 0) / 1000)}s</small><em>${title} · ${teamName(a.country)} ${skinName(a.skinId)} · 胜负统计预留</em></span><strong>${r.score || 0}</strong></div>`;
   }).join('') || '<p>暂无结算数据</p>';
   renderKeyMoments(data.keyMoments || data.moments || [], rows);
   updateReplayControls();
@@ -702,19 +717,66 @@ function ball(food) {
   }
 }
 function snake(s) {
-  const team = teamColor(s.country || s.countrySkin || s.teamId), body = s.body || s.segments || [];
+  const body = s.body || s.segments || [];
+  const a = appearanceOf(s);
   const cw = els.field.width / 40, ch = els.field.height / 28;
   body.forEach((seg, i) => {
     const p = point(seg);
-    ctx.fillStyle = i ? team : '#f6c443';
-    ctx.strokeStyle = i ? 'rgba(0,0,0,.35)' : team;
-    ctx.lineWidth = i ? 2 : 4;
-    roundRect(p.x * cw + 3, p.y * ch + 3, cw - 6, ch - 6, 10);
-    ctx.fill(); ctx.stroke();
-    if (i === 0) { ctx.fillStyle = '#10251c'; ctx.font = 'bold 14px sans-serif'; ctx.fillText('●', p.x * cw + cw * .38, p.y * ch + ch * .62); }
+    const dir = i === 0 ? snakeDirection(s, body) : 'right';
+    drawSnakeToken(ctx, p.x * cw + cw / 2, p.y * ch + ch / 2, Math.min(cw, ch) - 5, a, i, dir);
   });
 }
-function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); }
+function snakeDirection(s, body = []) {
+  if (s.direction) return s.direction;
+  const head = point(body[0]), neck = point(body[1]);
+  const dx = head.x - neck.x, dy = head.y - neck.y;
+  if (Math.abs(dx) > Math.abs(dy)) return dx >= 0 ? 'right' : 'left';
+  return dy >= 0 ? 'down' : 'up';
+}
+function drawSnakeToken(c, cx, cy, size, a, index = 0, direction = 'right') {
+  const head = index === 0;
+  const r = size / 2;
+  c.save();
+  c.translate(cx, cy);
+  c.fillStyle = head ? a.secondaryColor : a.primaryColor;
+  c.strokeStyle = head ? a.primaryColor : a.secondaryColor;
+  c.lineWidth = head ? 5 : 3;
+  roundRectCtx(c, -r, -r, size, size, Math.max(8, size * .28));
+  c.fill();
+  c.stroke();
+  drawSkinPattern(c, a, size, head);
+  if (head) drawSnakeFace(c, size, a, direction);
+  c.restore();
+}
+function drawSkinPattern(c, a, size, head) {
+  c.save();
+  c.lineCap = 'round';
+  if (a.skinId === 'lightning') {
+    c.strokeStyle = a.accent; c.lineWidth = Math.max(3, size * .12);
+    c.beginPath(); c.moveTo(-size * .28, -size * .22); c.lineTo(size * .02, -size * .04); c.lineTo(-size * .1, size * .23); c.lineTo(size * .3, size * .02); c.stroke();
+  } else if (a.skinId === 'star') {
+    c.fillStyle = a.secondaryColor;
+    for (let i = 0; i < 3; i += 1) { c.beginPath(); c.arc((-0.23 + i * 0.22) * size, (i % 2 ? .12 : -.12) * size, Math.max(2, size * .06), 0, Math.PI * 2); c.fill(); }
+  } else if (a.skinId === 'champion') {
+    c.strokeStyle = '#ffd43b'; c.lineWidth = Math.max(3, size * .1); c.strokeRect(-size * .36, -size * .36, size * .72, size * .72);
+  } else if (!head) {
+    c.fillStyle = a.secondaryColor; c.globalAlpha = .42; c.fillRect(-size * .32, -size * .08, size * .64, size * .16);
+  }
+  if (!head) { c.fillStyle = 'rgba(255,255,255,.2)'; c.beginPath(); c.arc(-size * .18, -size * .18, size * .13, 0, Math.PI * 2); c.fill(); }
+  c.restore();
+}
+function drawSnakeFace(c, size, a, direction) {
+  const angle = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 }[direction] || 0;
+  c.rotate(angle);
+  c.fillStyle = a.accent;
+  c.beginPath(); c.arc(size * .18, 0, size * .24, -Math.PI / 2, Math.PI / 2); c.fill();
+  c.fillStyle = '#10251c';
+  c.beginPath(); c.arc(size * .18, -size * .16, size * .06, 0, Math.PI * 2); c.arc(size * .18, size * .16, size * .06, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = 'rgba(16,37,28,.78)'; c.lineWidth = Math.max(2, size * .04);
+  c.beginPath(); c.moveTo(size * .34, -size * .08); c.lineTo(size * .43, 0); c.lineTo(size * .34, size * .08); c.stroke();
+}
+function roundRectCtx(c, x, y, w, h, r) { c.beginPath(); c.roundRect ? c.roundRect(x, y, w, h, r) : c.rect(x, y, w, h); }
+function roundRect(x, y, w, h, r) { roundRectCtx(ctx, x, y, w, h, r); }
 
 function startMock() {
   show('lobbyPanel');
@@ -734,9 +796,9 @@ function startMock() {
         { playerId: '3', nickname: '荷兰飞翼', country: 'ned', score: 10, alive: true, appearance: makeAppearance('ned', 'star') },
       ],
       snakes: [
-        { country: 'bra', body: [{ x: head, y: 5 }, { x: head - 1, y: 5 }, { x: head - 2, y: 5 }] },
-        { country: 'fra', body: [{ x: 22, y: 11 }, { x: 23, y: 11 }, { x: 24, y: 11 }] },
-        { country: 'ned', body: [{ x: 8, y: 21 }, { x: 8, y: 22 }, { x: 8, y: 23 }] },
+        { playerId: '1', country: 'bra', direction: 'right', body: [{ x: head, y: 5 }, { x: head - 1, y: 5 }, { x: head - 2, y: 5 }] },
+        { playerId: '2', country: 'fra', direction: 'left', body: [{ x: 22, y: 11 }, { x: 23, y: 11 }, { x: 24, y: 11 }] },
+        { playerId: '3', country: 'ned', direction: 'up', body: [{ x: 8, y: 21 }, { x: 8, y: 22 }, { x: 8, y: 23 }] },
       ],
       foods: [{ position: { x: 10, y: 8 } }, { position: { x: 28, y: 20 }, type: 'corpse', value: 5 }, { position: { x: 32, y: 6 } }],
       events: seq === 2 ? [{ type: 'countdown', tick: seq }] : seq === 8 ? [{ type: 'eat', playerId: '1', position: { x: head, y: 5 }, tick: seq }] : seq === 14 ? [{ type: 'foodEaten', playerId: '1', position: { x: 28, y: 20 }, foodType: 'corpse', value: 5, ownerPlayerId: '2', tick: seq }] : seq === 20 ? [{ type: 'eliminated', playerId: '2', reason: 'wall', tick: seq }] : seq === 24 ? [{ type: 'leadChanged', playerId: '1', previousLeaderId: '2', tick: seq }] : [],

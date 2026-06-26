@@ -56,6 +56,8 @@ export interface PlayerPublicState {
 
 export interface SnakeState {
   playerId: string;
+  country?: string;
+  appearance?: SnakeAppearance;
   direction: Direction;
   nextDirection: Direction;
   body: Vec2[];

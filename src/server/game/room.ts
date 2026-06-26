@@ -593,8 +593,9 @@ export class GameRoom {
   private snapshotSnakes(): SnakeState[] {
     return [...this.snakes.values()].map((snake) => {
       const body = snake.body.map((segment) => ({ ...segment }));
-      const deathReason = snake.alive ? undefined : this.players.get(snake.playerId)?.deathReason;
-      return { ...snake, body, segments: body.map((segment) => ({ ...segment })), deathReason };
+      const player = this.players.get(snake.playerId);
+      const deathReason = snake.alive ? undefined : player?.deathReason;
+      return { ...snake, country: player?.country, appearance: player?.appearance, body, segments: body.map((segment) => ({ ...segment })), deathReason };
     });
   }
 
