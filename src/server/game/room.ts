@@ -1,6 +1,6 @@
 import { GAME_CONFIG } from './constants.js';
 import { id, inBounds, isOpposite, nextPosition, posKey, roomCode, samePos, token } from './utils.js';
-import { PROTOCOL_VERSION, type DeathReason, type Direction, type FoodState, type GameEvent, type GameOverPayload, type GameOverPlayerResult, type GameSnapshotPayload, type PlayerPublicState, type PlayerStats, type RoomStatePayload, type SnakeState, type Vec2 } from '../../shared/protocol.js';
+import { PROTOCOL_VERSION, type DeathReason, type Direction, type FoodState, type GameEvent, type GameOverPayload, type GameOverPlayerResult, type GameSnapshotPayload, type PlayerPublicState, type PlayerStats, type RoomStatePayload, type SnakeAppearance, type SnakeState, type Vec2 } from '../../shared/protocol.js';
 
 interface PlayerInternal {
   id: string;
@@ -8,6 +8,7 @@ interface PlayerInternal {
   socketId?: string;
   nickname: string;
   country: string;
+  appearance?: SnakeAppearance;
   isHost: boolean;
   isReady: boolean;
   connectionState: 'connected' | 'disconnected';
@@ -50,7 +51,7 @@ export class GameRoom {
     this.code = nextCode;
   }
 
-  addPlayer(nickname: string, country: string, socketId: string, stats: Partial<PlayerStats> = {}): { playerId: string; playerToken: string } {
+  addPlayer(nickname: string, country: string, socketId: string, stats: Partial<PlayerStats> = {}, appearance?: SnakeAppearance): { playerId: string; playerToken: string } {
     if (this.phase !== 'lobby') {
       throw new Error('Room has already started');
     }
@@ -64,6 +65,7 @@ export class GameRoom {
       socketId,
       nickname: nickname.trim().slice(0, 20) || 'Player',
       country: country.trim().slice(0, 24) || 'World',
+      appearance,
       isHost: this.players.size === 0,
       isReady: false,
       connectionState: 'connected',
@@ -573,6 +575,7 @@ export class GameRoom {
         name: player.nickname,
         country: player.country,
         teamId: player.country,
+        appearance: player.appearance,
         isHost: player.isHost,
         isReady: player.isReady,
         connectionState: player.connectionState,
@@ -643,6 +646,7 @@ export class GameRoom {
         playerId: player.id,
         nickname: player.nickname,
         country: player.country,
+        appearance: player.appearance,
         rank: index + 1,
         score: player.score,
         aliveState: player.gameState === 'alive' ? 'alive' : 'eliminated',

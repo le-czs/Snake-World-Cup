@@ -1,7 +1,7 @@
 import type { Socket, Server } from 'socket.io';
 import { GAME_CONFIG, TICK_MS } from './game/constants.js';
 import { RoomManager } from './game/roomManager.js';
-import type { ClientToServerEvents, Direction, ErrorPayload, InterServerEvents, ServerToClientEvents, SocketData } from '../shared/protocol.js';
+import type { ClientToServerEvents, Direction, ErrorPayload, SnakeAppearance, InterServerEvents, ServerToClientEvents, SocketData } from '../shared/protocol.js';
 
 type SnakeIoServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 
@@ -29,7 +29,7 @@ export function registerSocketHandlers(io: SnakeIoServer): void {
       try {
         const room = rooms.createRoom();
         const normalized = normalizeProfile(payload);
-        const auth = room.addPlayer(normalized.nickname, normalized.country, socket.id, normalized.stats);
+        const auth = room.addPlayer(normalized.nickname, normalized.country, socket.id, normalized.stats, normalized.appearance);
         socket.data.roomId = room.id;
         socket.data.playerId = auth.playerId;
         socket.data.playerToken = auth.playerToken;
@@ -48,7 +48,7 @@ export function registerSocketHandlers(io: SnakeIoServer): void {
         const room = rooms.getByCode(payload.roomCode);
         if (!room) throw new SocketError('ROOM_NOT_FOUND', 'Room not found', 'joinRoom');
         const normalized = normalizeProfile(payload);
-        const auth = room.addPlayer(normalized.nickname, normalized.country, socket.id, normalized.stats);
+        const auth = room.addPlayer(normalized.nickname, normalized.country, socket.id, normalized.stats, normalized.appearance);
         socket.data.roomId = room.id;
         socket.data.playerId = auth.playerId;
         socket.data.playerToken = auth.playerToken;
@@ -249,10 +249,12 @@ function resolveRoomAuth(socket: SnakeSocket, payload?: Partial<{ roomId: string
   return { roomId, playerId, playerToken };
 }
 
-function normalizeProfile(payload: Partial<{ nickname: string; country: string; name: string; teamId: string; wins: number; losses: number; gamesPlayed: number; winRate: number; bestScore: number; title: string }>) {
+function normalizeProfile(payload: Partial<{ nickname: string; country: string; name: string; teamId: string; appearance: SnakeAppearance; wins: number; losses: number; gamesPlayed: number; winRate: number; bestScore: number; title: string }>) {
+  const country = payload.country ?? payload.teamId ?? payload.appearance?.country ?? 'World';
   return {
     nickname: payload.nickname ?? payload.name ?? 'Player',
-    country: payload.country ?? payload.teamId ?? 'World',
+    country,
+    appearance: normalizeAppearance(payload.appearance, country),
     stats: {
       wins: payload.wins,
       losses: payload.losses,
@@ -262,6 +264,24 @@ function normalizeProfile(payload: Partial<{ nickname: string; country: string; 
       title: payload.title
     }
   };
+}
+
+
+function normalizeAppearance(appearance: SnakeAppearance | undefined, fallbackCountry: string): SnakeAppearance | undefined {
+  if (!appearance) return undefined;
+  const country = String(appearance.country || fallbackCountry).slice(0, 24) || fallbackCountry;
+  return {
+    country,
+    skinId: String(appearance.skinId || 'classic').slice(0, 32),
+    primaryColor: normalizeColor(appearance.primaryColor, '#18A64A'),
+    secondaryColor: normalizeColor(appearance.secondaryColor, '#FFD43B'),
+    accent: normalizeColor(appearance.accent, '#143b22')
+  };
+}
+
+function normalizeColor(value: string | undefined, fallback: string): string {
+  const text = String(value || '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(text) ? text : fallback;
 }
 
 function normalizeDirection(direction: Direction): Direction {

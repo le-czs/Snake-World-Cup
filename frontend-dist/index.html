@@ -42,6 +42,8 @@
         </div>
         <label>昵称 <input id="nickname" maxlength="16" placeholder="输入昵称" /></label>
         <label>国家 <select id="country"></select></label>
+        <label>皮肤 <select id="skin"></select></label>
+        <button id="randomizeBtn" class="ghost randomize-btn" type="button">一键随机外观</button>
         <div class="actions entry-actions">
           <button id="createBtn">创建房间</button>
           <button id="showJoinBtn" class="secondary">加入房间</button>
@@ -53,14 +55,16 @@
         <p class="status" id="entryStatus"></p>
       </div>
 
-      <aside class="live-preview" aria-hidden="true">
-        <div class="preview-title"><span>LIVE PREVIEW</span><strong>00:58</strong></div>
-        <div class="mini-pitch">
-          <i class="mini-snake mini-snake-a"></i>
-          <i class="mini-snake mini-snake-b"></i>
-          <i class="mini-food"></i>
+      <aside class="live-preview appearance-preview" aria-label="蛇外观预览">
+        <div class="preview-title"><span>APPEARANCE</span><strong id="previewName">球员</strong></div>
+        <div class="preview-arena" id="previewCard">
+          <canvas id="entryPreview" width="360" height="180" aria-label="当前蛇外观预览"></canvas>
         </div>
-        <div class="preview-feed"><span>巴西 +10</span><span>法国 红牌</span><span>阿根廷 冲到第 1</span></div>
+        <div class="preview-feed preview-meta">
+          <span>国家 <b id="previewCountry">巴西</b></span>
+          <span>皮肤 <b id="previewSkin">经典球衣</b></span>
+          <span>状态 <b id="previewFeedback">已同步</b></span>
+        </div>
       </aside>
     </section>
 

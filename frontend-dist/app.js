@@ -1,8 +1,14 @@
 const TEAMS = [
-  ['bra','巴西','#18A64A','#FFD43B'], ['arg','阿根廷','#6EC6FF','#FFFFFF'],
-  ['fra','法国','#2446A6','#F23B3B'], ['eng','英格兰','#FFFFFF','#D92828'],
-  ['ger','德国','#1E1E1E','#F2C94C'], ['esp','西班牙','#D7262E','#FFC400'],
-  ['por','葡萄牙','#C8192E','#0C8A4B'], ['ned','荷兰','#F47B20','#1F4E9D']
+  ['bra','巴西','#18A64A','#FFD43B','#143b22'], ['arg','阿根廷','#6EC6FF','#FFFFFF','#1d5d86'],
+  ['fra','法国','#2446A6','#F23B3B','#ffffff'], ['eng','英格兰','#FFFFFF','#D92828','#2d5aa7'],
+  ['ger','德国','#1E1E1E','#F2C94C','#e54b3b'], ['esp','西班牙','#D7262E','#FFC400','#7a1519'],
+  ['por','葡萄牙','#C8192E','#0C8A4B','#f8d348'], ['ned','荷兰','#F47B20','#1F4E9D','#fff1d0']
+];
+const SKINS = [
+  ['classic', '经典球衣'],
+  ['lightning', '闪电纹'],
+  ['star', '星光纹'],
+  ['champion', '冠军金边'],
 ];
 const params = new URLSearchParams(location.search);
 const els = Object.fromEntries([...document.querySelectorAll('[id]')].map(el => [el.id, el]));
@@ -31,7 +37,12 @@ const state = {
 Object.assign(state, JSON.parse(localStorage.getItem('snake_wc_identity') || '{}'));
 
 TEAMS.forEach(([id, name]) => els.country.add(new Option(name, id)));
+SKINS.forEach(([id, name]) => els.skin.add(new Option(name, id)));
 els.nickname.value = localStorage.getItem('snake_wc_nickname') || `球员${Math.floor(Math.random() * 900 + 100)}`;
+const savedAppearance = JSON.parse(localStorage.getItem('snake_wc_appearance') || '{}');
+els.country.value = savedAppearance.country || els.country.value || TEAMS[0][0];
+els.skin.value = savedAppearance.skinId || savedAppearance.skin || SKINS[0][0];
+state.appearance = makeAppearance(els.country.value, els.skin.value);
 els.modeBadge.textContent = state.mock ? 'Mock 预览' : '真实联机';
 if (state.debug) els.debugPanel.style.display = 'block';
 
@@ -68,7 +79,8 @@ function emit(name, payload = {}, button) {
   });
 }
 function identityPayload() {
-  return { nickname: els.nickname.value.trim() || '球员', country: els.country.value };
+  const appearance = currentAppearance();
+  return { nickname: els.nickname.value.trim() || '球员', country: appearance.country, appearance };
 }
 function showError(msg) {
   const text = typeof msg === 'string' ? msg : (msg?.message || '操作失败');
@@ -78,8 +90,89 @@ function showError(msg) {
 }
 function saveIdentity(extra = {}) {
   Object.assign(state, extra);
+  saveAppearance();
   localStorage.setItem('snake_wc_identity', JSON.stringify({ roomId: state.roomId, playerId: state.playerId, playerToken: state.playerToken }));
   localStorage.setItem('snake_wc_nickname', els.nickname.value);
+}
+
+function teamById(id) { return TEAMS.find(t => t[0] === id) || TEAMS[0]; }
+function skinById(id) { return SKINS.find(s => s[0] === id) || SKINS[0]; }
+function makeAppearance(country = TEAMS[0][0], skinId = SKINS[0][0]) {
+  const team = teamById(country);
+  return { country: team[0], skinId: skinById(skinId)[0], primaryColor: team[2], secondaryColor: team[3], accent: team[4] || team[3] };
+}
+function currentAppearance() {
+  state.appearance = makeAppearance(els.country.value, els.skin.value);
+  return state.appearance;
+}
+function saveAppearance() {
+  const appearance = currentAppearance();
+  localStorage.setItem('snake_wc_appearance', JSON.stringify(appearance));
+  return appearance;
+}
+function normalizeAppearance(source = {}) {
+  const nested = source.appearance || {};
+  const country = nested.country || source.country || source.countrySkin || source.teamId || state.appearance?.country || TEAMS[0][0];
+  const skinId = nested.skinId || source.skinId || SKINS[0][0];
+  return { ...makeAppearance(country, skinId), ...nested, country, skinId: skinById(skinId)[0] };
+}
+function playerKey(p = {}) { return p.playerId || p.id || p.socketId || p.userId || ''; }
+function appearanceOf(source = {}) {
+  if (playerKey(source) && playerKey(source) === state.playerId) return normalizeAppearance({ ...source, appearance: source.appearance || state.appearance });
+  return normalizeAppearance(source);
+}
+function teamName(id) { return teamById(id)[1]; }
+function skinName(id) { return skinById(id)[1]; }
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+}
+function miniSnakeHtml(source = {}, className = '') {
+  const a = appearanceOf(source);
+  const vars = `--snake-primary:${a.primaryColor};--snake-secondary:${a.secondaryColor};--snake-accent:${a.accent}`;
+  return `<span class="snake-mini ${className} skin-${a.skinId}" style="${vars}" aria-hidden="true"><i></i><i></i><i></i><i></i></span>`;
+}
+function updateEntryPreview(feedback = '已同步') {
+  const a = saveAppearance();
+  els.previewName.textContent = els.nickname.value.trim() || '球员';
+  els.previewCountry.textContent = teamName(a.country);
+  els.previewSkin.textContent = skinName(a.skinId);
+  els.previewFeedback.textContent = feedback;
+  els.previewCard.style.setProperty('--snake-primary', a.primaryColor);
+  els.previewCard.style.setProperty('--snake-secondary', a.secondaryColor);
+  els.previewCard.style.setProperty('--snake-accent', a.accent);
+  drawEntryPreview(a, feedback);
+}
+function drawEntryPreview(a, feedback = '') {
+  const canvas = els.entryPreview;
+  const c = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  c.clearRect(0, 0, w, h);
+  c.fillStyle = '#0d6b3b'; c.fillRect(0, 0, w, h);
+  c.fillStyle = 'rgba(255,255,255,.08)';
+  for (let x = 0; x < w; x += 36) c.fillRect(x, 0, 18, h);
+  c.strokeStyle = 'rgba(255,255,255,.72)'; c.lineWidth = 4; c.strokeRect(16, 16, w - 32, h - 32);
+  [{x:230,y:72},{x:190,y:78},{x:150,y:96},{x:110,y:110},{x:72,y:110}].forEach((pt, i) => drawPreviewSegment(c, pt.x, pt.y, 38, a, i));
+  c.fillStyle = '#fff'; c.font = '900 18px sans-serif'; c.textAlign = 'center';
+  c.fillText(`${teamName(a.country)} · ${skinName(a.skinId)}`, w / 2, h - 22);
+}
+function drawPreviewSegment(c, cx, cy, size, a, index) {
+  const head = index === 0;
+  c.save(); c.translate(cx, cy);
+  c.fillStyle = head ? a.secondaryColor : a.primaryColor; c.strokeStyle = head ? a.primaryColor : a.secondaryColor; c.lineWidth = head ? 4 : 3;
+  c.beginPath(); c.roundRect ? c.roundRect(-size/2, -size/2, size, size, 12) : c.rect(-size/2, -size/2, size, size); c.fill(); c.stroke();
+  if (a.skinId === 'lightning') { c.strokeStyle = a.accent; c.lineWidth = 4; c.beginPath(); c.moveTo(-10,-8); c.lineTo(2,-2); c.lineTo(-3,10); c.lineTo(12,2); c.stroke(); }
+  if (a.skinId === 'star') { c.fillStyle = a.secondaryColor; c.beginPath(); c.arc(-5,-5,4,0,Math.PI*2); c.arc(8,7,3,0,Math.PI*2); c.fill(); }
+  if (a.skinId === 'champion') { c.strokeStyle = '#ffd43b'; c.lineWidth = 5; c.strokeRect(-size*.34,-size*.34,size*.68,size*.68); }
+  if (head) { c.fillStyle = '#10251c'; c.beginPath(); c.arc(7,-8,3,0,Math.PI*2); c.arc(7,8,3,0,Math.PI*2); c.fill(); }
+  c.restore();
+}
+function randomizeAppearance() {
+  const team = TEAMS[Math.floor(Math.random() * TEAMS.length)];
+  const skin = SKINS[Math.floor(Math.random() * SKINS.length)];
+  els.country.value = team[0];
+  els.skin.value = skin[0];
+  updateEntryPreview('已随机换装');
+  status(els.entryStatus, `已随机为 ${team[1]} · ${skin[1]}`);
 }
 
 function connect() {
@@ -151,6 +244,11 @@ function reconnect() {
   emit('reconnectPlayer', { roomId: state.roomId, playerId: state.playerId, playerToken: state.playerToken });
 }
 
+els.country.onchange = () => updateEntryPreview();
+els.skin.onchange = () => updateEntryPreview();
+els.nickname.oninput = () => updateEntryPreview();
+els.randomizeBtn.onclick = randomizeAppearance;
+updateEntryPreview();
 els.createBtn.onclick = () => emit('createRoom', identityPayload(), els.createBtn);
 els.showJoinBtn.onclick = () => { els.joinRow.hidden = !els.joinRow.hidden; };
 els.joinBtn.onclick = () => emit('joinRoom', { roomCode: els.roomCode.value.trim().toUpperCase(), ...identityPayload() }, els.joinBtn);
@@ -243,12 +341,13 @@ function renderRoom(room = {}) {
   updateLobbyControls(room, players, me);
 }
 function playerHtml(p) {
-  const team = teamColor(p.country || p.countrySkin || p.teamId);
+  const a = appearanceOf(p);
   const connected = (p.connectionState || (p.connected === false ? 'disconnected' : 'connected')) === 'connected';
   const ready = Boolean(p.isReady ?? p.ready);
-  const host = p.isHost ? '房主 · ' : '';
-  const stateText = `${host}${ready ? '已准备' : '未准备'} ${connected ? '' : '·掉线'} ${isEliminated(p) ? '·红牌' : ''}`;
-  return `<div class="player" style="--team:${team}"><span>${p.nickname || p.name || p.playerId || p.id}</span><strong>${stateText}</strong></div>`;
+  const host = p.isHost ? '<span class="host-crown" title="房主">♛</span>' : '';
+  const stateText = `${ready ? '已准备' : '未准备'}${connected ? '' : ' · 掉线'}${isEliminated(p) ? ' · 红牌' : ''}`;
+  const name = escapeHtml(p.nickname || p.name || p.playerId || p.id || '球员');
+  return `<div class="player appearance-player" style="--team:${a.primaryColor};--snake-primary:${a.primaryColor};--snake-secondary:${a.secondaryColor};--snake-accent:${a.accent}">${miniSnakeHtml(p, 'lobby-snake')}<span>${host}<b>${name}</b><small>${teamName(a.country)} · ${skinName(a.skinId)}</small></span><strong>${stateText}</strong></div>`;
 }
 function updateLobbyControls(room = {}, players = [], me) {
   const phase = room.phase || room.roomState || 'lobby';
@@ -553,7 +652,7 @@ function fmtTime(ms) {
   const total = Math.max(0, Math.ceil(ms / 1000));
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
-function teamColor(id) { return (TEAMS.find(t => t[0] === id) || TEAMS[0])[2]; }
+function teamColor(id) { return teamById(id)[2]; }
 
 const ctx = els.field.getContext('2d');
 function draw(snap = {}) {
@@ -620,7 +719,7 @@ function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRe
 function startMock() {
   show('lobbyPanel');
   state.roomId = 'MOCK01';
-  renderRoom({ roomId: 'MOCK01', players: [{ nickname: '巴西闪电', country: 'bra', ready: true }, { nickname: '法国铁卫', country: 'fra', ready: true }, { nickname: '荷兰飞翼', country: 'ned', ready: false }] });
+  renderRoom({ roomId: 'MOCK01', players: [{ playerId: '1', nickname: '巴西闪电', country: 'bra', ready: true, isHost: true, appearance: makeAppearance('bra', 'lightning') }, { playerId: '2', nickname: '法国铁卫', country: 'fra', ready: true, appearance: makeAppearance('fra', 'champion') }, { playerId: '3', nickname: '荷兰飞翼', country: 'ned', ready: false, appearance: makeAppearance('ned', 'star') }] });
   let seq = 0;
   setInterval(() => {
     seq += 1;
@@ -630,9 +729,9 @@ function startMock() {
       serverTick: seq,
       remainingMs: Math.max(0, 120000 - seq * 500),
       players: [
-        { playerId: '1', nickname: '巴西闪电', country: 'bra', score: 30 + seq, alive: true },
-        { playerId: '2', nickname: '法国铁卫', country: 'fra', score: 20, aliveState: seq > 18 ? 'eliminated' : 'alive', deathReason: 'wall' },
-        { playerId: '3', nickname: '荷兰飞翼', country: 'ned', score: 10, alive: true },
+        { playerId: '1', nickname: '巴西闪电', country: 'bra', score: 30 + seq, alive: true, appearance: makeAppearance('bra', 'lightning') },
+        { playerId: '2', nickname: '法国铁卫', country: 'fra', score: 20, aliveState: seq > 18 ? 'eliminated' : 'alive', deathReason: 'wall', appearance: makeAppearance('fra', 'champion') },
+        { playerId: '3', nickname: '荷兰飞翼', country: 'ned', score: 10, alive: true, appearance: makeAppearance('ned', 'star') },
       ],
       snakes: [
         { country: 'bra', body: [{ x: head, y: 5 }, { x: head - 1, y: 5 }, { x: head - 2, y: 5 }] },

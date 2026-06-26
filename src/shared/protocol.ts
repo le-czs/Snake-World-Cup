@@ -12,6 +12,14 @@ export interface Vec2 {
   y: number;
 }
 
+export interface SnakeAppearance {
+  country: string;
+  skinId: string;
+  primaryColor: string;
+  secondaryColor: string;
+  accent: string;
+}
+
 export interface PlayerStats {
   wins: number;
   losses: number;
@@ -28,6 +36,7 @@ export interface PlayerPublicState {
   name?: string;
   country: string;
   teamId?: string;
+  appearance?: SnakeAppearance;
   isHost: boolean;
   isReady: boolean;
   connectionState: PlayerConnectionState;
@@ -135,6 +144,7 @@ export interface GameOverPlayerResult {
   playerId: string;
   nickname: string;
   country: string;
+  appearance?: SnakeAppearance;
   rank: number;
   score: number;
   aliveState: 'alive' | 'eliminated';
@@ -166,12 +176,14 @@ export interface GameOverPayload {
 export interface CreateRoomRequest extends Partial<PlayerStats> {
   nickname: string;
   country: string;
+  appearance?: SnakeAppearance;
 }
 
 export interface JoinRoomRequest extends Partial<PlayerStats> {
   roomCode: string;
   nickname: string;
   country: string;
+  appearance?: SnakeAppearance;
 }
 
 export interface AuthenticatedRoomResponse {
