@@ -24,6 +24,37 @@ test('room starts only after countdown with initial snakes and foods', () => {
   assert.equal(room.foods.length, 6);
 });
 
+test('idle three-player starts stay alive long enough for players to react', () => {
+  const room = runningRoom(3);
+
+  for (let i = 0; i < 12 * GAME_CONFIG.tickRate; i += 1) {
+    room.tick(Date.now() + i * 100);
+    assert.equal(room.phase, 'running');
+  }
+
+  const players = room.toRoomState().players;
+  assert.equal(players.filter((player) => player.gameState === 'alive').length, 3);
+});
+
+test('idle wall protection stops after the player has input', () => {
+  const room = runningRoom(3);
+  const snake = [...room.snakes.values()][0];
+  const player = room.players.get(snake.playerId);
+  assert.ok(player);
+
+  player.lastInputSeq = 1;
+  snake.body = [{ x: GAME_CONFIG.mapWidth - 1, y: 5 }, { x: GAME_CONFIG.mapWidth - 2, y: 5 }, { x: GAME_CONFIG.mapWidth - 3, y: 5 }, { x: GAME_CONFIG.mapWidth - 4, y: 5 }];
+  snake.direction = 'right';
+  snake.nextDirection = 'right';
+
+  room.tick(Date.now());
+  room.tick(Date.now());
+
+  const updated = room.toRoomState().players.find((candidate) => candidate.playerId === snake.playerId);
+  assert.equal(updated?.gameState, 'eliminated');
+  assert.equal(updated?.deathReason, 'wall');
+});
+
 test('same tick food can credit multiple players and food respawns once', () => {
   const room = runningRoom(2);
   const snakes = [...room.snakes.values()];
@@ -69,6 +100,9 @@ test('three-player match continues after one death and corpse food scores', () =
   const hunter = snakes[1];
   const bystander = snakes[2];
 
+  const victimPlayer = room.players.get(victim.playerId);
+  assert.ok(victimPlayer);
+  victimPlayer.lastInputSeq = 1;
   victim.body = [{ x: 0, y: 10 }, { x: 1, y: 10 }, { x: 2, y: 10 }, { x: 3, y: 10 }];
   victim.direction = 'left';
   victim.nextDirection = 'left';

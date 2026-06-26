@@ -354,6 +354,14 @@ export class GameRoom {
       if (!isOpposite(snake.direction, snake.nextDirection)) {
         snake.direction = snake.nextDirection;
       }
+      const player = this.players.get(snake.playerId);
+      if (player?.lastInputSeq === 0) {
+        const safeDirection = chooseIdleSafeDirection(snake, GAME_CONFIG.mapWidth, GAME_CONFIG.mapHeight);
+        if (safeDirection) {
+          snake.direction = safeDirection;
+          snake.nextDirection = safeDirection;
+        }
+      }
       plannedHeads.set(snake.playerId, nextPosition(snake.body[0], snake.direction));
     });
 
@@ -693,4 +701,20 @@ function buildSnakeBody(head: Vec2, direction: Direction, length: number): Vec2[
     }
   }
   return body;
+}
+
+function chooseIdleSafeDirection(snake: SnakeState, width: number, height: number): Direction | undefined {
+  if (inBounds(nextPosition(snake.body[0], snake.direction), width, height)) return undefined;
+
+  const turnOptions: Record<Direction, Direction[]> = {
+    right: ['down', 'up'],
+    left: ['up', 'down'],
+    up: ['right', 'left'],
+    down: ['left', 'right']
+  };
+  const bodyToCheck = snake.body.slice(0, -1);
+  return turnOptions[snake.direction].find((direction) => {
+    const next = nextPosition(snake.body[0], direction);
+    return inBounds(next, width, height) && !bodyToCheck.some((segment) => samePos(segment, next));
+  });
 }
