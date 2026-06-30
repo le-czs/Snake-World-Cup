@@ -224,6 +224,11 @@ function tickRooms(io: SnakeIoServer): void {
     const snapshot = room.tick();
     if (snapshot) {
       console.log('[tick] gameSnapshot', { roomId: room.id, roomState: room.phase, serverTick: snapshot.serverTick });
+      for (const event of snapshot.events) {
+        if (event.type === 'foodEaten' || event.type === 'corpseEaten' || event.type === 'foodRemoved') {
+          io.to(room.id).emit(event.type, event);
+        }
+      }
       io.to(room.id).emit('gameSnapshot', snapshot);
     }
     if (previousPhase !== 'finished' && room.phase === 'finished') {

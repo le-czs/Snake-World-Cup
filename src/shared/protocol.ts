@@ -5,7 +5,7 @@ export type Direction = 'up' | 'down' | 'left' | 'right';
 export type PlayerConnectionState = 'connected' | 'disconnected';
 export type PlayerGameState = 'lobby' | 'alive' | 'eliminated' | 'spectating';
 export type DeathReason = 'wall' | 'body' | 'headToHead' | 'disconnectTimeout';
-export type GameEventType = 'foodEaten' | 'playerEliminated' | 'matchFinished';
+export type GameEventType = 'foodEaten' | 'corpseEaten' | 'foodRemoved' | 'playerEliminated' | 'matchFinished';
 
 export interface Vec2 {
   x: number;
@@ -88,12 +88,14 @@ export interface GameEvent {
   playerId?: string;
   foodId?: string;
   deathReason?: DeathReason;
-  reason?: DeathReason;
+  reason?: DeathReason | 'eaten' | 'expired';
   position?: Vec2;
   x?: number;
   y?: number;
   value?: number;
   foodType?: FoodType;
+  ownerPlayerId?: string;
+  removedFoodIds?: string[];
 }
 
 export interface RoomStatePayload {
@@ -270,6 +272,9 @@ export interface ServerToClientEvents {
   roomState: (payload: RoomStatePayload) => void;
   countdown: (payload: { roomId: string; roundId: string; remainingMs: number; seconds: number; secondsLeft: number; startAt?: number } | number) => void;
   gameSnapshot: (payload: GameSnapshotPayload) => void;
+  foodEaten: (payload: GameEvent) => void;
+  corpseEaten: (payload: GameEvent) => void;
+  foodRemoved: (payload: GameEvent) => void;
   playerStatus: (payload: PlayerPublicState) => void;
   gameOver: (payload: GameOverPayload) => void;
   errorMessage: (payload: ErrorPayload) => void;

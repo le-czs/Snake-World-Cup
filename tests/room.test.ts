@@ -128,8 +128,50 @@ test('three-player match continues after one death and corpse food scores', () =
   snapshot = room.tick(Date.now());
 
   const hunterState = room.toRoomState().players.find((player) => player.playerId === hunter.playerId);
+  const corpseEvent = snapshot?.events.find((event) => event.type === 'corpseEaten' && event.foodType === 'corpse');
   assert.equal(hunterState?.score, GAME_CONFIG.corpseFoodScore);
-  assert.ok(snapshot?.events.some((event) => event.type === 'foodEaten' && event.foodType === 'corpse'));
+  assert.match(corpseEvent?.foodId ?? '', /^corpse_/);
+  assert.equal(corpseEvent?.ownerPlayerId, victim.playerId);
+  assert.equal(snapshot?.foods.some((food) => food.foodId === corpseEvent?.foodId), false);
+  assert.ok(snapshot?.events.some((event) => event.type === 'foodRemoved' && event.removedFoodIds?.includes(corpseEvent?.foodId ?? '')));
+});
+
+test('same corpse food credits only one player and is removed when multiple players reach it', () => {
+  const room = runningRoom(3);
+  const snakes = [...room.snakes.values()];
+  const leftHunter = snakes[0];
+  const rightHunter = snakes[1];
+  const owner = snakes[2];
+
+  leftHunter.body = [{ x: 9, y: 10 }, { x: 8, y: 10 }, { x: 7, y: 10 }, { x: 6, y: 10 }];
+  leftHunter.direction = 'right';
+  leftHunter.nextDirection = 'right';
+  rightHunter.body = [{ x: 11, y: 10 }, { x: 12, y: 10 }, { x: 13, y: 10 }, { x: 14, y: 10 }];
+  rightHunter.direction = 'left';
+  rightHunter.nextDirection = 'left';
+  owner.body = [{ x: 20, y: 20 }, { x: 21, y: 20 }, { x: 22, y: 20 }, { x: 23, y: 20 }];
+  owner.direction = 'left';
+  owner.nextDirection = 'left';
+  room.foods = [{
+    foodId: 'corpse-shared',
+    position: { x: 10, y: 10 },
+    type: 'corpse',
+    value: GAME_CONFIG.corpseFoodScore,
+    growth: GAME_CONFIG.corpseFoodGrowth,
+    ownerPlayerId: owner.playerId
+  }];
+
+  room.tick(Date.now());
+  const snapshot = room.tick(Date.now());
+  const players = room.toRoomState().players;
+  const leftState = players.find((player) => player.playerId === leftHunter.playerId);
+  const rightState = players.find((player) => player.playerId === rightHunter.playerId);
+
+  assert.equal((leftState?.score ?? 0) + (rightState?.score ?? 0), GAME_CONFIG.corpseFoodScore);
+  assert.equal([leftState?.score, rightState?.score].filter((score) => score === GAME_CONFIG.corpseFoodScore).length, 1);
+  assert.equal(room.foods.filter((food) => food.foodId === 'corpse-shared').length, 0);
+  assert.equal(snapshot?.events.filter((event) => event.foodId === 'corpse-shared' && event.type === 'corpseEaten').length, 1);
+  assert.equal(snapshot?.events.filter((event) => event.type === 'foodRemoved' && event.removedFoodIds?.includes('corpse-shared')).length, 1);
 });
 
 test('disconnect timeout eliminates player while preserving score', () => {

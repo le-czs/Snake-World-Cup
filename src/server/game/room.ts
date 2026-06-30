@@ -367,15 +367,16 @@ export class GameRoom {
       plannedHeads.set(snake.playerId, nextPosition(snake.body[0], snake.direction));
     });
 
-    const eatenFoodIds = new Set<string>();
+    const eatenFoods = new Map<string, FoodState>();
     const foodEaters = new Map<string, string[]>();
     aliveSnakes.forEach((snake) => {
       const nextHead = plannedHeads.get(snake.playerId);
       if (!nextHead) return;
       const eatenFood = this.foods.find((food) => samePos(food.position, nextHead));
       if (!eatenFood) return;
+      if (eatenFood.type === 'corpse' && eatenFoods.has(eatenFood.foodId)) return;
 
-      eatenFoodIds.add(eatenFood.foodId);
+      eatenFoods.set(eatenFood.foodId, eatenFood);
       foodEaters.set(eatenFood.foodId, [...(foodEaters.get(eatenFood.foodId) ?? []), snake.playerId]);
       const player = this.players.get(snake.playerId);
       if (player && eatenFood.ownerPlayerId !== snake.playerId) {
@@ -450,9 +451,10 @@ export class GameRoom {
     });
 
     foodEaters.forEach((playerIds, foodId) => {
-      const food = this.foods.find((candidate) => candidate.foodId === foodId);
-      this.pendingEvents.push({
-        type: 'foodEaten',
+      const food = eatenFoods.get(foodId);
+      const isCorpse = food?.type === 'corpse';
+      const event = {
+        type: isCorpse ? 'corpseEaten' : 'foodEaten',
         serverTick: this.serverTick,
         playerIds,
         playerId: playerIds[0],
@@ -461,11 +463,30 @@ export class GameRoom {
         x: food?.position.x,
         y: food?.position.y,
         value: food?.value ?? GAME_CONFIG.foodScore,
-        foodType: food?.type ?? 'normal'
-      });
+        foodType: food?.type ?? 'normal',
+        ownerPlayerId: food?.ownerPlayerId,
+        reason: 'eaten'
+      } satisfies GameEvent;
+      this.pendingEvents.push(event);
+      if (isCorpse) {
+        console.log('[corpse] eaten', {
+          roomId: this.id,
+          roundId: this.roundId,
+          serverTick: this.serverTick,
+          corpseId: foodId,
+          playerIds,
+          ownerPlayerId: food?.ownerPlayerId
+        });
+      }
     });
-    if (eatenFoodIds.size > 0) {
-      this.foods = this.foods.filter((food) => !eatenFoodIds.has(food.foodId));
+    if (eatenFoods.size > 0) {
+      this.foods = this.foods.filter((food) => !eatenFoods.has(food.foodId));
+      this.pendingEvents.push({
+        type: 'foodRemoved',
+        serverTick: this.serverTick,
+        removedFoodIds: [...eatenFoods.keys()],
+        reason: 'eaten'
+      });
       this.ensureFoodCount();
     }
   }

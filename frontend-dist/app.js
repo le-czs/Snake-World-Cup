@@ -32,6 +32,7 @@ const state = {
   lastRankByPlayer: new Map(),
   lastLeaderId: '',
   lastSfxAt: new Map(),
+  removedFoodIds: new Set(),
   isInputLocked: false,
 };
 Object.assign(state, JSON.parse(localStorage.getItem('snake_wc_identity') || '{}'));
@@ -229,8 +230,9 @@ function connect() {
   });
   state.socket.on('playerEliminated', data => renderEvent({ type: 'playerEliminated', ...data }));
   state.socket.on('eat', data => renderEvent({ type: 'eat', ...data }));
-  state.socket.on('foodEaten', data => renderEvent({ type: 'foodEaten', ...data }));
-  state.socket.on('corpseEaten', data => renderEvent({ type: 'corpseEaten', foodType: 'corpse', value: 5, ...data }));
+  state.socket.on('foodEaten', data => handleFoodConsumed({ type: 'foodEaten', ...data }));
+  state.socket.on('corpseEaten', data => handleFoodConsumed({ type: 'corpseEaten', foodType: 'corpse', value: 5, ...data }));
+  state.socket.on('foodRemoved', data => removeFoods(data?.removedFoodIds || data?.foodIds || (data?.foodId ? [data.foodId] : [])));
   state.socket.on('leadChanged', data => renderEvent({ type: 'leadChanged', ...data }));
   state.socket.on('gameOver', renderGameOver);
   state.socket.on('rematch', renderRoom);
@@ -321,6 +323,7 @@ function resetRoundView() {
   state.lastRankByPlayer = new Map();
   state.lastLeaderId = '';
   state.eventsSeen = new Set();
+  state.removedFoodIds = new Set();
   els.resultList.innerHTML = '';
   els.eventLog.innerHTML = '';
   els.keyMoments.hidden = true;
@@ -385,7 +388,11 @@ function renderSnapshot(snap = {}) {
     resetRoundView();
   }
   state.lastSeq = seq;
+  if (state.snapshot?.roundId && snap.roundId && state.snapshot.roundId !== snap.roundId) {
+    state.removedFoodIds.clear();
+  }
   state.snapshot = snap;
+  reconcileRemovedFoods(snap);
   show('gamePanel');
   els.timeText.textContent = fmtTime(snap.remainingMs ?? snap.timeLeft ?? 0);
   draw(snap);
@@ -404,6 +411,23 @@ function renderSnapshot(snap = {}) {
   (snap.events || []).forEach(renderEvent);
   if (state.debug) els.debugPanel.textContent = `seq ${snap.snapshotSeq ?? '--'}\ntick ${snap.serverTick ?? '--'}\nroom ${state.roomId || '--'}`;
 }
+function handleFoodConsumed(ev = {}) {
+  if (ev.foodId) removeFoods([ev.foodId]);
+  renderEvent(ev);
+}
+function removeFoods(foodIds = []) {
+  const ids = foodIds.filter(Boolean);
+  if (!ids.length) return;
+  ids.forEach(id => state.removedFoodIds.add(id));
+  if (state.snapshot?.foods) {
+    state.snapshot.foods = state.snapshot.foods.filter(food => !state.removedFoodIds.has(food.foodId || food.id));
+    draw(state.snapshot);
+  }
+}
+function reconcileRemovedFoods(snap = {}) {
+  if (!state.removedFoodIds.size) return;
+  snap.foods = (snap.foods || []).filter(food => !state.removedFoodIds.has(food.foodId || food.id));
+}
 function renderEvent(ev = {}) {
   const key = `${ev.type}-${ev.playerId || ''}-${(ev.playerIds || []).join('.')}-${ev.foodId || ''}-${ev.tick || ev.serverTick || ''}-${ev.reason || ev.deathReason || ''}`;
   if (state.eventsSeen.has(key)) return;
@@ -419,7 +443,12 @@ function renderEvent(ev = {}) {
     if (isMine) eliminateFeedback(reason);
     else banner(`🟥 ${deadName}\n${reasonText(reason)}淘汰`, 'redcard', 1400);
   }
+  if (ev.type === 'foodRemoved') {
+    removeFoods(ev.removedFoodIds || ev.foodIds || (ev.foodId ? [ev.foodId] : []));
+    return;
+  }
   if (ev.type === 'eat' || ev.type === 'foodEaten' || ev.type === 'corpseEaten') {
+    if (ev.foodId) removeFoods([ev.foodId]);
     const value = ev.value ?? (ev.foodType === 'corpse' ? 5 : 10);
     const isCorpse = ev.foodType === 'corpse' || ev.type === 'corpseEaten';
     const label = isCorpse ? '尸体球' : '足球';
@@ -521,6 +550,7 @@ function leaveRoom() {
   state.lastRankByPlayer = new Map();
   state.lastLeaderId = '';
   state.eventsSeen = new Set();
+  state.removedFoodIds = new Set();
   localStorage.removeItem('snake_wc_identity');
   els.roomIdText.textContent = '--';
   els.playerList.innerHTML = '';
