@@ -35,6 +35,8 @@ const state = {
   removedFoodIds: new Set(),
   isInputLocked: false,
 };
+const MAX_EVENT_CHIPS = 3;
+const EVENT_CHIP_TTL_MS = 2200;
 Object.assign(state, JSON.parse(localStorage.getItem('snake_wc_identity') || '{}'));
 
 TEAMS.forEach(([id, name]) => els.country.add(new Option(name, id)));
@@ -441,7 +443,7 @@ function renderEvent(ev = {}) {
     logEvent(text, 'danger');
     cueSfx(isMine ? 'eliminated' : 'red-card', { channel: 'commentary' });
     if (isMine) eliminateFeedback(reason);
-    else banner(`🟥 ${deadName}\n${reasonText(reason)}淘汰`, 'redcard', 1400);
+    else subtleMatchPulse('danger');
   }
   if (ev.type === 'foodRemoved') {
     removeFoods(ev.removedFoodIds || ev.foodIds || (ev.foodId ? [ev.foodId] : []));
@@ -453,7 +455,7 @@ function renderEvent(ev = {}) {
     const isCorpse = ev.foodType === 'corpse' || ev.type === 'corpseEaten';
     const label = isCorpse ? '尸体球' : '足球';
     const eaterName = playerName(ev.playerId || playerIds[0]);
-    logEvent(`${isMine ? '你' : eaterName}吃到${label} +${value}`, isCorpse ? 'corpse' : 'score');
+    if (!isCorpse) logEvent(`${isMine ? '你' : eaterName}吃到${label} +${value}`, 'score');
     scorePopAtGrid(ev.position || ev.foodPosition || ev.headPosition, value, isCorpse ? 'corpse' : 'normal');
     if (isCorpse) corpseClaimFeedback(ev, isMine, eaterName, value);
     else cueSfx('eat');
@@ -502,7 +504,7 @@ function announceLeader(leaderId, previousLeaderId) {
   const name = playerName(leaderId);
   const mine = leaderId === state.playerId;
   logEvent(`${mine ? '你' : name}冲到第一！`, 'lead');
-  banner(`${mine ? '你' : name}\n领跑全场`, 'lead', 1300);
+  subtleMatchPulse('lead');
   cueSfx('lead', { channel: 'commentary' });
 }
 function renderGameOver(data = {}) {
@@ -647,17 +649,39 @@ function scorePopAtGrid(pos, value = 10, kind = 'normal') {
   setTimeout(() => pop.remove(), 760);
 }
 function logEvent(text, kind = '') {
+  const existing = [...els.eventLog.children].find(chip => chip.dataset.text === text && chip.dataset.kind === kind);
+  if (existing) {
+    existing.classList.remove('bump');
+    void existing.offsetWidth;
+    existing.classList.add('bump');
+    clearTimeout(existing.removeTimer);
+    existing.removeTimer = setTimeout(() => existing.remove(), EVENT_CHIP_TTL_MS);
+    return;
+  }
   const chip = document.createElement('div');
   chip.className = `event-chip ${kind}`.trim();
+  chip.dataset.text = text;
+  chip.dataset.kind = kind;
   chip.textContent = text;
   els.eventLog.prepend(chip);
-  setTimeout(() => chip.remove(), 3000);
+  [...els.eventLog.children].slice(MAX_EVENT_CHIPS).forEach(node => node.remove());
+  chip.removeTimer = setTimeout(() => chip.remove(), EVENT_CHIP_TTL_MS);
+}
+function subtleMatchPulse(kind = '') {
+  els.gamePanel.classList.remove('feed-pulse', 'feed-pulse-lead', 'feed-pulse-danger');
+  void els.gamePanel.offsetWidth;
+  els.gamePanel.classList.add('feed-pulse');
+  if (kind === 'lead') els.gamePanel.classList.add('feed-pulse-lead');
+  if (kind === 'danger') els.gamePanel.classList.add('feed-pulse-danger');
+  clearTimeout(subtleMatchPulse.t);
+  subtleMatchPulse.t = setTimeout(() => els.gamePanel.classList.remove('feed-pulse', 'feed-pulse-lead', 'feed-pulse-danger'), 520);
 }
 function corpseClaimFeedback(ev, isMine, eaterName, value) {
   const ownerId = ev.ownerPlayerId || ev.deadPlayerId || ev.victimPlayerId;
   const ownedByMe = ownerId === state.playerId;
-  const title = isMine ? `尸体球 +${value}` : ownedByMe ? '你的尸体被抢！' : `${eaterName} 抢到尸体`;
-  banner(`${title}\n+${value} 不增长`, 'corpse', 1500);
+  const title = isMine ? `你抢到尸体球 +${value}` : ownedByMe ? `你的尸体被抢 +${value}` : `${eaterName} 抢到尸体 +${value}`;
+  logEvent(`${title} · 不增长`, 'corpse');
+  subtleMatchPulse('corpse');
   cueSfx('corpse', { channel: 'commentary' });
 }
 function renderKeyMoments(moments = [], rows = []) {
