@@ -93,7 +93,7 @@ export function registerSocketHandlers(io: SnakeIoServer): void {
         const resolved = resolveRoomAuth(socket, payload);
         const room = requireRoom(resolved.roomId);
         const direction = normalizeDirection(payload.direction);
-        const accepted = room.acceptInput(resolved.playerId, resolved.playerToken, payload.inputSeq, direction);
+        const accepted = room.acceptInput(resolved.playerId, resolved.playerToken, payload.inputSeq, direction, Boolean(payload.boost));
         ack?.({ accepted });
       } catch (err) {
         fail(socket, ack, err);

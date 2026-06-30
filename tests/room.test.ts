@@ -55,6 +55,40 @@ test('idle wall protection stops after the player has input', () => {
   assert.equal(updated?.deathReason, 'wall');
 });
 
+test('boost moves faster and drains length down to a safe minimum', () => {
+  const room = runningRoom(2);
+  const snake = [...room.snakes.values()][0];
+  const player = room.players.get(snake.playerId);
+  assert.ok(player);
+  assert.equal(room.acceptInput(player.id, player.token, 1, snake.direction, true), true);
+
+  const startX = snake.body[0].x;
+  for (let i = 0; i < GAME_CONFIG.boostDrainTicks; i += 1) {
+    room.tick(Date.now() + i * 100);
+  }
+
+  assert.ok(snake.body[0].x - startX > GAME_CONFIG.boostDrainTicks / GAME_CONFIG.moveEveryTicks);
+  assert.equal(snake.body.length, 3);
+  assert.equal(snake.boostActive, false);
+});
+
+test('boost checks the full boosted path for wall collisions', () => {
+  const room = runningRoom(2);
+  const snake = [...room.snakes.values()][0];
+  const player = room.players.get(snake.playerId);
+  assert.ok(player);
+  snake.body = [{ x: GAME_CONFIG.mapWidth - 2, y: 5 }, { x: GAME_CONFIG.mapWidth - 3, y: 5 }, { x: GAME_CONFIG.mapWidth - 4, y: 5 }, { x: GAME_CONFIG.mapWidth - 5, y: 5 }];
+  snake.direction = 'right';
+  snake.nextDirection = 'right';
+  assert.equal(room.acceptInput(player.id, player.token, 1, 'right', true), true);
+
+  for (let i = 0; i < 4; i += 1) room.tick(Date.now() + i * 100);
+
+  const updated = room.toRoomState().players.find((candidate) => candidate.playerId === snake.playerId);
+  assert.equal(updated?.gameState, 'eliminated');
+  assert.equal(updated?.deathReason, 'wall');
+});
+
 test('same tick food can credit multiple players and food respawns once', () => {
   const room = runningRoom(2);
   const snakes = [...room.snakes.values()];

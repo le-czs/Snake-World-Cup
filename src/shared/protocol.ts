@@ -64,6 +64,9 @@ export interface SnakeState {
   segments?: Vec2[];
   pendingGrowth: number;
   alive: boolean;
+  boostActive?: boolean;
+  boostCharge?: number;
+  boostDrainCharge?: number;
 }
 
 export type FoodType = 'normal' | 'corpse';
@@ -215,6 +218,7 @@ export interface InputRequest {
   playerToken: string;
   inputSeq: number;
   direction: Direction;
+  boost?: boolean;
   clientTime: number;
 }
 

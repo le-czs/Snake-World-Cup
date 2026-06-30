@@ -34,6 +34,9 @@ const state = {
   lastSfxAt: new Map(),
   removedFoodIds: new Set(),
   isInputLocked: false,
+  boostHeld: false,
+  currentDirection: 'right',
+  boostInputTimer: null,
 };
 const MAX_EVENT_CHIPS = 3;
 const EVENT_CHIP_TTL_MS = 2200;
@@ -305,14 +308,36 @@ els.homeBtn.onclick = () => returnToLobby();
 els.exitRoomBtn.onclick = () => leaveRoom();
 els.exitRoomResultBtn.onclick = () => leaveRoom();
 const keyMap = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' };
-document.addEventListener('keydown', e => { if (keyMap[e.code]) { e.preventDefault(); sendInput(keyMap[e.code]); } });
+document.addEventListener('keydown', e => {
+  if (keyMap[e.code]) { e.preventDefault(); sendInput(keyMap[e.code]); }
+  if (e.code === 'Space' && !e.repeat) { e.preventDefault(); setBoostHeld(true); }
+});
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space') { e.preventDefault(); setBoostHeld(false); }
+});
 document.querySelectorAll('[data-dir]').forEach(b => b.onclick = () => sendInput(b.dataset.dir));
-function sendInput(direction) {
+if (els.boostBtn) {
+  els.boostBtn.onpointerdown = e => { e.preventDefault(); setBoostHeld(true); };
+  els.boostBtn.onpointerup = e => { e.preventDefault(); setBoostHeld(false); };
+  els.boostBtn.onpointercancel = () => setBoostHeld(false);
+  els.boostBtn.onpointerleave = () => setBoostHeld(false);
+}
+function setBoostHeld(active) {
+  if (state.isInputLocked) active = false;
+  if (state.boostHeld === active) return;
+  state.boostHeld = active;
+  els.gamePanel.classList.toggle('boost-held', state.boostHeld);
+  sendInput(state.currentDirection, true);
+  clearInterval(state.boostInputTimer);
+  state.boostInputTimer = state.boostHeld ? setInterval(() => sendInput(state.currentDirection, true), 180) : null;
+}
+function sendInput(direction, force = false) {
   if (state.isInputLocked) return;
+  state.currentDirection = direction || state.currentDirection;
   const now = Date.now();
-  if (now - state.lastInputAt < 70) return;
+  if (!force && now - state.lastInputAt < 70) return;
   state.lastInputAt = now;
-  emit('input', authPayload({ inputSeq: ++state.inputSeq, direction, clientTime: now }));
+  emit('input', authPayload({ inputSeq: ++state.inputSeq, direction: state.currentDirection, boost: state.boostHeld, clientTime: now }));
 }
 
 function resetRoundView() {
@@ -320,6 +345,10 @@ function resetRoundView() {
   state.lastSeq = -1;
   state.inputSeq = 0;
   state.lastInputAt = 0;
+  state.boostHeld = false;
+  state.currentDirection = 'right';
+  clearInterval(state.boostInputTimer);
+  state.boostInputTimer = null;
   state.lastResults = [];
   state.lastPlayerScores = new Map();
   state.lastRankByPlayer = new Map();
@@ -335,7 +364,7 @@ function resetRoundView() {
   els.meText.textContent = '0 分 · 0 球 · 对战中';
   els.timeText.textContent = '02:00';
   els.spectatorNotice.hidden = true;
-  els.gamePanel.classList.remove('spectating', 'danger-flash');
+  els.gamePanel.classList.remove('spectating', 'danger-flash', 'boost-held');
   updateInputLock(false);
   els.banner.hidden = true;
   els.banner.className = 'center-banner';
@@ -546,6 +575,10 @@ function leaveRoom() {
   state.ready = false;
   state.inputSeq = 0;
   state.lastInputAt = 0;
+  state.boostHeld = false;
+  state.currentDirection = 'right';
+  clearInterval(state.boostInputTimer);
+  state.boostInputTimer = null;
   state.lastRoom = null;
   state.lastResults = [];
   state.lastPlayerScores = new Map();
@@ -566,6 +599,7 @@ function leaveRoom() {
   els.debugPanel.textContent = '';
   els.spectatorNotice.hidden = true;
   updateInputLock(false);
+  els.gamePanel.classList.remove('boost-held');
   els.banner.hidden = true;
   show('entryPanel');
   status(els.entryStatus, '已退出房间，可以重新创建或加入');
@@ -622,6 +656,7 @@ function updateSpectatorState(player, rank) {
 }
 function updateInputLock(locked) {
   state.isInputLocked = Boolean(locked);
+  if (state.isInputLocked) setBoostHeld(false);
   els.gamePanel.classList.toggle('input-locked', state.isInputLocked);
   document.querySelectorAll('[data-dir]').forEach(button => { button.disabled = state.isInputLocked; });
 }
@@ -774,10 +809,11 @@ function snake(s) {
   const body = s.body || s.segments || [];
   const a = appearanceOf(s);
   const cw = els.field.width / 40, ch = els.field.height / 28;
+  if (s.boostActive && body.length) drawBoostTrail(s, body, a, cw, ch);
   body.forEach((seg, i) => {
     const p = point(seg);
     const dir = i === 0 ? snakeDirection(s, body) : 'right';
-    drawSnakeToken(ctx, p.x * cw + cw / 2, p.y * ch + ch / 2, Math.min(cw, ch) - 5, a, i, dir);
+    drawSnakeToken(ctx, p.x * cw + cw / 2, p.y * ch + ch / 2, Math.min(cw, ch) - 5, a, i, dir, Boolean(s.boostActive));
   });
 }
 function snakeDirection(s, body = []) {
@@ -787,11 +823,35 @@ function snakeDirection(s, body = []) {
   if (Math.abs(dx) > Math.abs(dy)) return dx >= 0 ? 'right' : 'left';
   return dy >= 0 ? 'down' : 'up';
 }
-function drawSnakeToken(c, cx, cy, size, a, index = 0, direction = 'right') {
+function drawBoostTrail(s, body, a, cw, ch) {
+  const dir = snakeDirection(s, body);
+  const tail = point(body[body.length - 1]);
+  const offset = { right: [-1, 0], left: [1, 0], down: [0, -1], up: [0, 1] }[dir] || [-1, 0];
+  const cx = (tail.x + .5 + offset[0] * .55) * cw;
+  const cy = (tail.y + .5 + offset[1] * .55) * ch;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate({ right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 }[dir] || 0);
+  const flame = ctx.createLinearGradient(-cw * 1.4, 0, cw * .2, 0);
+  flame.addColorStop(0, 'rgba(246,196,67,0)');
+  flame.addColorStop(.48, 'rgba(246,196,67,.9)');
+  flame.addColorStop(1, a.accent || '#fff7bf');
+  ctx.fillStyle = flame;
+  ctx.beginPath();
+  ctx.moveTo(-cw * 1.5, 0);
+  ctx.lineTo(-cw * .2, -ch * .33);
+  ctx.lineTo(cw * .18, 0);
+  ctx.lineTo(-cw * .2, ch * .33);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+function drawSnakeToken(c, cx, cy, size, a, index = 0, direction = 'right', boosted = false) {
   const head = index === 0;
   const r = size / 2;
   c.save();
   c.translate(cx, cy);
+  if (boosted) { c.shadowColor = 'rgba(246,196,67,.85)'; c.shadowBlur = head ? 22 : 12; }
   c.fillStyle = head ? a.secondaryColor : a.primaryColor;
   c.strokeStyle = head ? a.primaryColor : a.secondaryColor;
   c.lineWidth = head ? 5 : 3;

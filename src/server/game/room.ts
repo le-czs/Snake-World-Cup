@@ -168,12 +168,13 @@ export class GameRoom {
     return true;
   }
 
-  acceptInput(playerId: string, playerToken: string, inputSeq: number, direction: Direction): boolean {
+  acceptInput(playerId: string, playerToken: string, inputSeq: number, direction: Direction, boost = false): boolean {
     const player = this.authenticate(playerId, playerToken);
     const snake = this.snakes.get(playerId);
     if (this.phase !== 'running' || player.gameState !== 'alive' || !snake) return false;
     if (inputSeq <= player.lastInputSeq) return false;
     player.lastInputSeq = inputSeq;
+    snake.boostActive = boost && canBoost(snake);
     if (isOpposite(snake.direction, direction)) return false;
     snake.nextDirection = direction;
     return true;
@@ -192,8 +193,10 @@ export class GameRoom {
       this.ensureFoodCount();
     }
 
-    if (this.serverTick % GAME_CONFIG.moveEveryTicks === 0) {
-      this.stepMovement(now);
+    const isMovementTick = this.serverTick % GAME_CONFIG.moveEveryTicks === 0;
+    const movingBoosted = this.applyBoostDrain(isMovementTick);
+    if (isMovementTick) {
+      this.stepMovement(now, movingBoosted);
     }
 
     const remainingMs = Math.max(0, GAME_CONFIG.matchDurationMs - (now - this.startedAt));
@@ -301,6 +304,43 @@ export class GameRoom {
     };
   }
 
+  private applyBoostDrain(isMovementTick: boolean): Set<string> {
+    const boosted = new Set<string>();
+    this.snakes.forEach((snake) => {
+      if (!snake.alive) return;
+      if (!canBoost(snake)) {
+        snake.boostActive = false;
+        snake.boostCharge = 0;
+        snake.boostDrainCharge = 0;
+        return;
+      }
+      if (!snake.boostActive) {
+        snake.boostCharge = 0;
+        snake.boostDrainCharge = 0;
+        return;
+      }
+
+      snake.boostDrainCharge = (snake.boostDrainCharge ?? 0) + 1;
+      if (isMovementTick) {
+        snake.boostCharge = (snake.boostCharge ?? 0) + (GAME_CONFIG.boostMultiplier - 1);
+        if (snake.boostCharge >= 1) {
+          boosted.add(snake.playerId);
+          snake.boostCharge = Math.max(0, snake.boostCharge - 1);
+        }
+      }
+      if (snake.boostDrainCharge >= GAME_CONFIG.boostDrainTicks && canSpendBoostLength(snake)) {
+        snake.body.pop();
+        snake.boostDrainCharge = 0;
+      }
+      if (!canBoost(snake)) {
+        snake.boostActive = false;
+        snake.boostCharge = 0;
+        snake.boostDrainCharge = 0;
+      }
+    });
+    return boosted;
+  }
+
   private resetRoundRuntime(resetReady: boolean): void {
     this.countdownStartedAt = undefined;
     this.startedAt = undefined;
@@ -344,60 +384,72 @@ export class GameRoom {
         nextDirection: start.direction,
         body,
         pendingGrowth: 0,
-        alive: true
+        alive: true,
+        boostActive: false,
+        boostCharge: 0,
+        boostDrainCharge: 0
       });
     });
   }
 
-  private stepMovement(now: number): void {
+  private stepMovement(now: number, movingBoosted = new Set<string>()): void {
     const aliveSnakes = [...this.snakes.values()].filter((snake) => snake.alive);
-    const plannedHeads = new Map<string, Vec2>();
+    const movePlans = new Map<string, Vec2[]>();
     aliveSnakes.forEach((snake) => {
-      if (!isOpposite(snake.direction, snake.nextDirection)) {
-        snake.direction = snake.nextDirection;
-      }
-      const player = this.players.get(snake.playerId);
-      if (player?.lastInputSeq === 0) {
-        const safeDirection = chooseIdleSafeDirection(snake, GAME_CONFIG.mapWidth, GAME_CONFIG.mapHeight);
-        if (safeDirection) {
-          snake.direction = safeDirection;
-          snake.nextDirection = safeDirection;
+      const heads: Vec2[] = [];
+      const steps = movingBoosted.has(snake.playerId) ? 2 : 1;
+      for (let step = 0; step < steps; step += 1) {
+        if (!isOpposite(snake.direction, snake.nextDirection)) {
+          snake.direction = snake.nextDirection;
         }
+        const player = this.players.get(snake.playerId);
+        if (player?.lastInputSeq === 0) {
+          const safeDirection = chooseIdleSafeDirection({ ...snake, body: [heads[step - 1] ?? snake.body[0], ...snake.body.slice(1)] }, GAME_CONFIG.mapWidth, GAME_CONFIG.mapHeight);
+          if (safeDirection) {
+            snake.direction = safeDirection;
+            snake.nextDirection = safeDirection;
+          }
+        }
+        heads.push(nextPosition(heads[step - 1] ?? snake.body[0], snake.direction));
       }
-      plannedHeads.set(snake.playerId, nextPosition(snake.body[0], snake.direction));
+      movePlans.set(snake.playerId, heads);
     });
+    const plannedHeads = finalHeads(movePlans);
 
     const eatenFoods = new Map<string, FoodState>();
     const foodEaters = new Map<string, string[]>();
     aliveSnakes.forEach((snake) => {
-      const nextHead = plannedHeads.get(snake.playerId);
-      if (!nextHead) return;
-      const eatenFood = this.foods.find((food) => samePos(food.position, nextHead));
-      if (!eatenFood) return;
-      if (eatenFood.type === 'corpse' && eatenFoods.has(eatenFood.foodId)) return;
+      const heads = movePlans.get(snake.playerId) ?? [];
+      heads.forEach((head) => {
+        const eatenFood = this.foods.find((food) => samePos(food.position, head));
+        if (!eatenFood) return;
+        if (eatenFood.type === 'corpse' && eatenFoods.has(eatenFood.foodId)) return;
 
-      eatenFoods.set(eatenFood.foodId, eatenFood);
-      foodEaters.set(eatenFood.foodId, [...(foodEaters.get(eatenFood.foodId) ?? []), snake.playerId]);
-      const player = this.players.get(snake.playerId);
-      if (player && eatenFood.ownerPlayerId !== snake.playerId) {
-        player.score += eatenFood.value;
-        player.eatCount += 1;
-        player.lastEatTick = this.serverTick;
-      }
-      snake.pendingGrowth += eatenFood.growth;
+        eatenFoods.set(eatenFood.foodId, eatenFood);
+        foodEaters.set(eatenFood.foodId, [...(foodEaters.get(eatenFood.foodId) ?? []), snake.playerId]);
+        const player = this.players.get(snake.playerId);
+        if (player && eatenFood.ownerPlayerId !== snake.playerId) {
+          player.score += eatenFood.value;
+          player.eatCount += 1;
+          player.lastEatTick = this.serverTick;
+        }
+        snake.pendingGrowth += eatenFood.growth;
+      });
     });
 
     const deaths = new Map<string, DeathReason>();
-    plannedHeads.forEach((head, playerId) => {
-      if (!inBounds(head, GAME_CONFIG.mapWidth, GAME_CONFIG.mapHeight)) {
+    movePlans.forEach((heads, playerId) => {
+      if (heads.some((head) => !inBounds(head, GAME_CONFIG.mapWidth, GAME_CONFIG.mapHeight))) {
         deaths.set(playerId, 'wall');
       }
     });
 
     const headBuckets = new Map<string, string[]>();
-    plannedHeads.forEach((head, playerId) => {
-      const key = posKey(head);
-      headBuckets.set(key, [...(headBuckets.get(key) ?? []), playerId]);
+    movePlans.forEach((heads, playerId) => {
+      heads.forEach((head) => {
+        const key = posKey(head);
+        headBuckets.set(key, [...(headBuckets.get(key) ?? []), playerId]);
+      });
     });
     headBuckets.forEach((playerIds) => {
       if (playerIds.length > 1) {
@@ -420,7 +472,8 @@ export class GameRoom {
 
     const occupied = new Map<string, string[]>();
     aliveSnakes.forEach((snake) => {
-      const willGrow = this.foods.some((food) => samePos(food.position, plannedHeads.get(snake.playerId) ?? snake.body[0]));
+      const heads = movePlans.get(snake.playerId) ?? [];
+      const willGrow = this.foods.some((food) => heads.some((head) => samePos(food.position, head)));
       const bodyToCheck = willGrow ? snake.body : snake.body.slice(0, -1);
       bodyToCheck.forEach((segment) => {
         const key = posKey(segment);
@@ -428,9 +481,8 @@ export class GameRoom {
       });
     });
 
-    plannedHeads.forEach((head, playerId) => {
-      const bodyOwners = occupied.get(posKey(head)) ?? [];
-      if (bodyOwners.length > 0) {
+    movePlans.forEach((heads, playerId) => {
+      if (heads.some((head) => (occupied.get(posKey(head)) ?? []).length > 0)) {
         deaths.set(playerId, 'body');
       }
     });
@@ -439,15 +491,15 @@ export class GameRoom {
 
     aliveSnakes.forEach((snake) => {
       if (!snake.alive) return;
-      const nextHead = plannedHeads.get(snake.playerId);
-      if (!nextHead) return;
-
-      snake.body.unshift(nextHead);
-      if (snake.pendingGrowth > 0) {
-        snake.pendingGrowth -= 1;
-      } else {
-        snake.body.pop();
-      }
+      const heads = movePlans.get(snake.playerId) ?? [];
+      heads.forEach((nextHead) => {
+        snake.body.unshift(nextHead);
+        if (snake.pendingGrowth > 0) {
+          snake.pendingGrowth -= 1;
+        } else {
+          snake.body.pop();
+        }
+      });
     });
 
     foodEaters.forEach((playerIds, foodId) => {
@@ -699,6 +751,23 @@ function normalizeStats(stats: Partial<PlayerStats> = {}): PlayerStats {
   const bestScore = Math.max(0, Number(stats.bestScore) || 0);
   const winRate = gamesPlayed ? Math.round((wins / gamesPlayed) * 100) : 0;
   return { wins, losses, gamesPlayed, winRate, bestScore, title: titleForWins(wins) };
+}
+
+function canBoost(snake: SnakeState): boolean {
+  return snake.alive && snake.body.length > GAME_CONFIG.boostMinLength;
+}
+
+function canSpendBoostLength(snake: SnakeState): boolean {
+  return snake.body.length > GAME_CONFIG.boostMinLength;
+}
+
+function finalHeads(movePlans: Map<string, Vec2[]>): Map<string, Vec2> {
+  const heads = new Map<string, Vec2>();
+  movePlans.forEach((plan, playerId) => {
+    const head = plan.at(-1);
+    if (head) heads.set(playerId, head);
+  });
+  return heads;
 }
 
 function normalizeDeathReason(reason?: DeathReason): 'wall' | 'body' | 'headOn' | 'disconnected' | 'unknown' | undefined {

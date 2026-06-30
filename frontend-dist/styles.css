@@ -329,6 +329,8 @@ canvas { max-width: min(calc(100vw - 340px), calc(100% - 320px)); max-height: ca
 .top-left { left: 18px; top: 18px; }
 .top-right { right: 18px; top: 18px; }
 .bottom-left { left: 18px; bottom: 18px; }
+.boost-hint { left: 18px; bottom: 76px; color: #10251c; background: linear-gradient(135deg, rgba(255,247,191,.95), rgba(246,196,67,.92)); border: 3px solid rgba(16,42,86,.28); letter-spacing: .04em; transition: transform .18s ease, box-shadow .18s ease; }
+.game.boost-held .boost-hint { transform: translateY(-4px) scale(1.04); box-shadow: 0 0 0 6px rgba(246,196,67,.26), 0 16px 38px rgba(0,0,0,.22); }
 .leaderboard { right: 18px; top: 232px; width: 240px; display: grid; gap: 8px; }
 .event-log { position: absolute; right: 18px; top: 84px; width: min(260px, 24vw); display: grid; gap: 6px; pointer-events: none; z-index: 8; }
 .event-log::before { content: "MATCH FEED"; justify-self: end; padding: 3px 8px; border-radius: 999px; background: rgba(7,29,43,.72); color: rgba(255,247,191,.9); font-size: 10px; font-weight: 1000; letter-spacing: .12em; }
@@ -351,6 +353,7 @@ canvas { max-width: min(calc(100vw - 340px), calc(100% - 320px)); max-height: ca
 .center-banner.error { color: #fff; background: rgba(217,45,32,.94); padding: 20px 28px; border: 4px solid rgba(255,255,255,.86); font-size: clamp(22px, 5vw, 44px); }
 .spectator-notice { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); z-index: 5; max-width: min(520px, calc(100% - 220px)); padding: 12px 18px; border-radius: 999px; background: rgba(217,45,32,.94); color: #fff; font-weight: 900; text-align: center; box-shadow: 0 12px 30px rgba(0,0,0,.22); }
 .game.spectating canvas { filter: saturate(.45) brightness(.78); }
+.game.boost-held canvas { box-shadow: 0 0 0 8px rgba(246,196,67,.3), 0 28px 70px rgba(0,0,0,.35); }
 .game.input-locked .controls button { opacity: .42; pointer-events: none; }
 .game.danger-flash::after,
 .game.feed-pulse::after { content: ""; position: absolute; inset: 0; pointer-events: none; animation: flashOut .7s ease forwards; }
@@ -360,6 +363,8 @@ canvas { max-width: min(calc(100vw - 340px), calc(100% - 320px)); max-height: ca
 .game.feed-pulse-danger::after { background: linear-gradient(90deg, transparent 0 72%, rgba(217,45,32,.18) 100%); }
 .controls { display: none; position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); text-align: center; gap: 6px; }
 .controls button { width: 62px; height: 50px; padding: 0; margin: 3px; }
+.controls .boost-btn { display: block; width: 132px; margin: 7px auto 0; color: #10251c; background: linear-gradient(135deg, var(--gold), #fff7bf); border-color: #102a56; touch-action: none; }
+.game.boost-held .boost-btn { transform: translateY(2px); filter: brightness(1.08); }
 .result-hero { margin: 16px 0; padding: 18px; border-radius: 20px; color: #fff7bf; background: linear-gradient(135deg, var(--stadium-blue), #07172f); border: 4px double var(--gold); box-shadow: inset 0 0 0 2px rgba(255,255,255,.1); text-align: center; }
 .result-hero span { display: block; letter-spacing: .18em; font-size: 12px; color: var(--gold); font-weight: 1000; }
 .result-hero strong { display: block; margin: 6px 0; font-size: clamp(26px, 7vw, 44px); line-height: 1; }
@@ -430,6 +435,7 @@ canvas { max-width: min(calc(100vw - 340px), calc(100% - 320px)); max-height: ca
   .key-moments span { display: grid; }
   .debug { display: none !important; }
   .bottom-left { bottom: 80px; }
+  .boost-hint { left: 12px; bottom: 16px; padding: 8px 10px; font-size: 12px; }
   .controls { display: block; }
 }
 @media (max-width: 430px) {
