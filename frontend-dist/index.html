@@ -76,7 +76,7 @@
         <button id="startBtn" class="secondary">开始比赛</button>
       </div>
       <p class="status" id="lobbyStatus">等待玩家准备...</p>
-      <details class="rules"><summary>本局规则</summary><p>普通足球 +10 分并增长 1 格；淘汰蛇会掉落 10 秒尸体球，抢到 +5 不增长；撞墙、撞蛇身、头撞头都会红牌淘汰，最终排名以服务端结算为准。</p></details>
+      <details class="rules"><summary>本局规则</summary><p>普通足球 +10 分并增长 1 格；淘汰蛇会掉落 10 秒尸体球，抢到 +5 不增长；按住 SPACE/BOOST 以 1.45 倍加速，每 1.2 秒消耗 1 节，剩 4 节时停止加速；撞墙、撞蛇身、头撞头都会红牌淘汰，最终排名以服务端结算为准。</p></details>
     </section>
 
     <section class="game" id="gamePanel" hidden>
@@ -84,7 +84,7 @@
       <div class="hud top-left"><span id="timeText">02:00</span></div>
       <div class="hud top-right"><span id="netText">连接中</span></div>
       <div class="hud bottom-left"><span id="meText">0 分 · 第 --</span></div>
-      <div class="hud boost-hint" id="boostHint">SPACE 加速 · 消耗蛇身</div>
+      <div class="hud boost-hint" id="boostHint">SPACE 加速 1.45x · 1.2秒/节 · 最低4节</div>
       <aside class="leaderboard" id="leaderboard"></aside>
       <div class="spectator-notice" id="spectatorNotice" hidden>已淘汰，等待本局结算</div>
       <div class="event-log" id="eventLog"></div>

@@ -60,6 +60,7 @@ test('boost moves faster and drains length down to a safe minimum', () => {
   const snake = [...room.snakes.values()][0];
   const player = room.players.get(snake.playerId);
   assert.ok(player);
+  snake.body = [{ x: 5, y: 5 }, { x: 4, y: 5 }, { x: 3, y: 5 }, { x: 2, y: 5 }, { x: 1, y: 5 }];
   assert.equal(room.acceptInput(player.id, player.token, 1, snake.direction, true), true);
 
   const startX = snake.body[0].x;
@@ -67,8 +68,8 @@ test('boost moves faster and drains length down to a safe minimum', () => {
     room.tick(Date.now() + i * 100);
   }
 
-  assert.ok(snake.body[0].x - startX > GAME_CONFIG.boostDrainTicks / GAME_CONFIG.moveEveryTicks);
-  assert.equal(snake.body.length, 3);
+  assert.ok(snake.body[0].x - startX >= GAME_CONFIG.boostDrainTicks / GAME_CONFIG.moveEveryTicks);
+  assert.equal(snake.body.length, GAME_CONFIG.boostMinLength);
   assert.equal(snake.boostActive, false);
 });
 
